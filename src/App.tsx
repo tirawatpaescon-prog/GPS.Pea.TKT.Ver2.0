@@ -25,12 +25,25 @@ import {
   ArrowUp,
   ChevronDown,
   Sun,
-  Moon
+  Moon,
+  History,
+  Clock,
+  Trash2,
+  CloudDownload,
+  CheckCircle2
 } from 'lucide-react';
 
 // Define the shape of our CSV record dynamically
 interface PeaRecord {
   [key: string]: string;
+}
+
+interface RecentSearch {
+  id: string;
+  meter: string;
+  ca: string;
+  address: string;
+  timestamp: string;
 }
 
 interface CompactFields {
@@ -218,6 +231,15 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<IndexedRecord[] | null>(null);
   const [displayLimit, setDisplayLimit] = useState(24);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<'live' | 'cached' | 'error'>('cached');
+  const [lastSyncFullDate, setLastSyncFullDate] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('pea_records_cache_fulldate');
+    } catch {
+      return null;
+    }
+  });
+  const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   
   // PWA installation states
@@ -269,6 +291,72 @@ export default function App() {
       );
       return next;
     });
+  };
+
+  // Recent Searches state with localStorage persistence
+  const [recentSearches, setRecentSearches] = useState<RecentSearch[]>(() => {
+    try {
+      const saved = localStorage.getItem('pea_recent_searches');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const saveRecentSearch = (m: string, c: string, a: string) => {
+    const mClean = m.trim();
+    const cClean = c.trim();
+    const aClean = a.trim();
+    if (!mClean && !cClean && !aClean) return;
+
+    setRecentSearches((prev) => {
+      const filtered = prev.filter(
+        (item) => !(item.meter === mClean && item.ca === cClean && item.address === aClean)
+      );
+      const newItem: RecentSearch = {
+        id: Date.now().toString(),
+        meter: mClean,
+        ca: cClean,
+        address: aClean,
+        timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+      };
+      const updated = [newItem, ...filtered].slice(0, 10);
+      try {
+        localStorage.setItem('pea_recent_searches', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Could not save recent searches:', e);
+      }
+      return updated;
+    });
+  };
+
+  const removeRecentSearch = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecentSearches((prev) => {
+      const updated = prev.filter((item) => item.id !== id);
+      try {
+        localStorage.setItem('pea_recent_searches', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Could not save recent searches:', e);
+      }
+      return updated;
+    });
+  };
+
+  const clearRecentSearches = () => {
+    setRecentSearches([]);
+    try {
+      localStorage.removeItem('pea_recent_searches');
+    } catch (e) {
+      console.warn('Could not clear recent searches:', e);
+    }
+  };
+
+  const handleSelectRecentSearch = (item: RecentSearch) => {
+    setSearchMeter(item.meter);
+    setSearchCa(item.ca);
+    setSearchAddressName(item.address);
+    executeSearch(item.meter, item.ca, item.address);
   };
 
   // Ref to search input for rapid focus
@@ -393,17 +481,19 @@ export default function App() {
 
     const localCacheStr = localStorage.getItem('pea_records_cache');
     const localCacheTime = localStorage.getItem('pea_records_cache_time');
+    const localCacheFullDate = localStorage.getItem('pea_records_cache_fulldate');
 
     try {
       let csvText = '';
+      const targetUrl = forceRefresh ? `${CSV_URL}&_t=${Date.now()}` : CSV_URL;
       
       try {
-        const response = await fetch(CSV_URL);
+        const response = await fetch(targetUrl, { cache: forceRefresh ? 'no-cache' : 'default' });
         if (!response.ok) throw new Error(`ไม่สามารถดึงข้อมูลได้ (HTTP ${response.status})`);
         csvText = await response.text();
       } catch (directErr) {
         csvText = await new Promise<string>((resolve, reject) => {
-          Papa.parse(CSV_URL, {
+          Papa.parse(targetUrl, {
             download: true,
             complete: (results) => {
               if (results.data && Array.isArray(results.data) && results.data.length > 0) {
@@ -429,11 +519,24 @@ export default function App() {
 
             if (data && data.length > 0) {
               setAllRecords(data);
-              const now = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
-              setLastUpdated(now);
+              const nowShort = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+              const nowFull = new Date().toLocaleDateString('th-TH', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+              }) + ' น.';
+
+              setLastUpdated(nowShort);
+              setLastSyncFullDate(nowFull);
+              setSyncStatus('live');
+
               try {
                 localStorage.setItem('pea_records_cache', JSON.stringify(data));
-                localStorage.setItem('pea_records_cache_time', now);
+                localStorage.setItem('pea_records_cache_time', nowShort);
+                localStorage.setItem('pea_records_cache_fulldate', nowFull);
               } catch (e) {
                 console.warn('Could not write to localStorage cache:', e);
               }
@@ -454,6 +557,8 @@ export default function App() {
           if (cachedData && cachedData.length > 0) {
             setAllRecords(cachedData);
             if (localCacheTime) setLastUpdated(localCacheTime);
+            if (localCacheFullDate) setLastSyncFullDate(localCacheFullDate);
+            setSyncStatus('cached');
             return cachedData;
           }
         } catch (e) {
@@ -461,12 +566,30 @@ export default function App() {
         }
       }
 
+      setSyncStatus('error');
       const isFetchErr = err?.message?.toLowerCase().includes('fetch') || err?.name === 'TypeError';
       const userMessage = isFetchErr
         ? 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ Google Sheets ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต'
         : (err?.message || 'เครือข่ายขัดข้อง กรุณาลองใหม่อีกครั้ง');
 
       throw new Error(userMessage);
+    }
+  };
+
+  const handleForceSync = async () => {
+    setIsSyncing(true);
+    setLoading(true);
+    setMascotText('กำลังบังคับซิงก์ข้อมูลสดตรงจาก Google Sheets กรุณารอสักครู่ฮะ... 🔄');
+    try {
+      const data = await fetchDatabase(true);
+      setError(null);
+      setMascotText(`บังคับซิงก์ข้อมูลจาก Google Sheets สำเร็จเรียบร้อย! อัปเดตพิกัดทั้งหมด ${data.length.toLocaleString()} รายการล่าสุดฮะ ⚡`);
+    } catch (err: any) {
+      setError(`การบังคับซิงก์ขัดข้อง: ${err?.message || 'ไม่สามารถโหลดข้อมูลสดได้'}`);
+      setMascotText('เกิดข้อผิดพลาดในการซิงก์สดจาก Google Sheets ระบบจะสลับไปใช้แคชในเครื่องฮะ');
+    } finally {
+      setIsSyncing(false);
+      setLoading(false);
     }
   };
 
@@ -520,6 +643,8 @@ export default function App() {
       setMascotText('ป้อนข้อมูลในช่องใดช่องหนึ่งก่อนสิฮะ ไม่งั้นปุ่มแสกนจะทำงานไม่ได้นะเนี้ย! 😅');
       return;
     }
+
+    saveRecentSearch(meterQuery, caQuery, addrQuery);
 
     setError(null);
     setDisplayLimit(24);
@@ -997,16 +1122,113 @@ export default function App() {
           </div>
         </div>
 
-        {/* Database update timestamp indicator */}
-        {lastUpdated && (
-          <div className="mt-3 sm:mt-4 flex items-center justify-between text-[10px] sm:text-xxs text-slate-500 dark:text-slate-400 font-mono font-bold">
-            <span className="flex items-center gap-1">
-              <Database className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-600 dark:text-sky-400" />
-              ฐานข้อมูลพร้อมใช้งานแบบออฟไลน์
-            </span>
-            <span>อัปเดต: {lastUpdated} น.</span>
+        {/* Recent Searches Section */}
+        {recentSearches.length > 0 && (
+          <div className="mt-3 pt-3 sm:mt-4 sm:pt-4 border-t-2 border-dashed border-slate-200 dark:border-slate-700">
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest font-black flex items-center gap-1">
+                <History className="w-3.5 h-3.5 text-indigo-600 dark:text-sky-400" />
+                <span>ประวัติการค้นหาล่าสุด ({recentSearches.length}):</span>
+              </p>
+              <button
+                type="button"
+                onClick={clearRecentSearches}
+                className="text-[10px] text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
+                title="ล้างประวัติการค้นหาทั้งหมด"
+              >
+                <Trash2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <span>ล้างประวัติ</span>
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 sm:gap-2">
+              {recentSearches.map((item) => {
+                const parts = [];
+                if (item.meter) parts.push(`Meter: ${item.meter}`);
+                if (item.ca) parts.push(`CA: ${item.ca}`);
+                if (item.address) parts.push(item.address);
+                const label = parts.join(' | ');
+
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => handleSelectRecentSearch(item)}
+                    className="group text-[11px] sm:text-xs bg-slate-100 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl border-2 border-[#1E293B] dark:border-sky-400 font-bold transition flex items-center gap-1.5 cursor-pointer shadow-[1.5px_1.5px_0px_#1E293B] dark:shadow-[1.5px_1.5px_0px_#0284C7] active:translate-x-0.5 active:translate-y-0.5"
+                  >
+                    <Clock className="w-3 h-3 text-indigo-500 dark:text-sky-400 shrink-0" />
+                    <span className="truncate max-w-[180px] sm:max-w-[260px]">{label}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => removeRecentSearch(item.id, e)}
+                      className="p-0.5 hover:bg-rose-200 dark:hover:bg-rose-900/80 rounded text-slate-400 hover:text-rose-700 dark:hover:text-rose-200 transition shrink-0 ml-0.5"
+                      title="ลบรายการนี้"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
+
+        {/* Google Sheets Sync Status & Force Sync Control Panel */}
+        <div className="mt-3.5 pt-3 sm:mt-4 sm:pt-4 border-t-2 border-dashed border-slate-200 dark:border-slate-700">
+          <div className="bg-slate-50/80 dark:bg-slate-900/90 rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 border-2 border-[#1E293B] dark:border-sky-400 shadow-[2px_2px_0px_#1E293B] dark:shadow-[2px_2px_0px_#0284C7] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-2.5">
+              <div className={`p-2 rounded-xl border-2 border-[#1E293B] dark:border-sky-400 shrink-0 ${
+                syncStatus === 'live'
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-300'
+                  : syncStatus === 'cached'
+                  ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/90 dark:text-amber-300'
+                  : 'bg-rose-100 text-rose-900 dark:bg-rose-950/90 dark:text-rose-300'
+              }`}>
+                {syncStatus === 'live' ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                ) : syncStatus === 'cached' ? (
+                  <Database className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                ) : (
+                  <WifiOff className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs sm:text-sm font-black text-[#1E293B] dark:text-slate-100 font-display">
+                    สถานะซิงก์ข้อมูล Google Sheets
+                  </span>
+                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border-2 border-[#1E293B] dark:border-sky-400 ${
+                    syncStatus === 'live'
+                      ? 'bg-emerald-400 text-slate-950'
+                      : syncStatus === 'cached'
+                      ? 'bg-amber-300 text-slate-950'
+                      : 'bg-rose-400 text-slate-950'
+                  }`}>
+                    {syncStatus === 'live'
+                      ? '🟢 Live Online'
+                      : syncStatus === 'cached'
+                      ? '🟡 Offline Cache'
+                      : '🔴 Disconnected'}
+                  </span>
+                </div>
+                <p className="text-[11px] sm:text-xs font-bold text-slate-600 dark:text-slate-300 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span>ซิงก์ล่าสุด: <strong className="text-indigo-600 dark:text-sky-300">{lastSyncFullDate || (lastUpdated ? `เวลา ${lastUpdated} น.` : 'ยังไม่เคยซิงก์')}</strong></span>
+                  <span className="hidden sm:inline text-slate-300 dark:text-slate-600">•</span>
+                  <span>บันทึกในระบบ: <strong className="text-indigo-600 dark:text-sky-300">{allRecords.length.toLocaleString()} รายการ</strong></span>
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={loading || isSyncing}
+              onClick={handleForceSync}
+              className="cyber-btn bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-400 text-white font-black px-3.5 py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer select-none transition-all shadow-[1.5px_1.5px_0px_#1E293B] dark:shadow-[1.5px_1.5px_0px_#0284C7] active:translate-x-0.5 active:translate-y-0.5"
+              title="บังคับดาวน์โหลดข้อมูลล่าสุดสดๆ จาก Google Sheets โดยไม่ผ่านแคชในเครื่อง"
+            >
+              <CloudDownload className={`w-4 h-4 ${isSyncing ? 'animate-bounce text-yellow-300' : ''}`} />
+              <span>{isSyncing ? 'กำลังบังคับซิงก์...' : 'บังคับซิงก์ใหม่ (Force Sync)'}</span>
+            </button>
+          </div>
+        </div>
       </section>
 
       {/* ERROR Banner */}
