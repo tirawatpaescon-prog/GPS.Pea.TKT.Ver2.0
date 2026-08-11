@@ -139,6 +139,12 @@ const calculateThaiSimilarity = (query: string, fullName: string, normRowText: s
     return 100;
   }
 
+  // Fast pre-check: if query first character is completely absent from both fields, skip heavy Levenshtein
+  const firstChar = qNorm.charAt(0);
+  if (firstChar && !fNorm.includes(firstChar) && !rowNorm.includes(firstChar)) {
+    return 0;
+  }
+
   // 2. Thai Phonetic / Vowel Skeleton Comparison (e.g. วิรัช vs วีรัช, วึรัช, วืรัช)
   const qSkel = getThaiPhoneticSkeleton(qNorm);
   const fSkel = getThaiPhoneticSkeleton(fNorm);
@@ -163,6 +169,9 @@ const calculateThaiSimilarity = (query: string, fullName: string, normRowText: s
     for (const fTok of fTokens) {
       const fTokSkel = getThaiPhoneticSkeleton(fTok);
       if (fTokSkel.length < 2) continue;
+
+      // Skip Levenshtein if length difference is too large (> 3 chars)
+      if (Math.abs(qTokSkel.length - fTokSkel.length) > 3) continue;
 
       if (fTokSkel.includes(qTokSkel) || qTokSkel.includes(fTokSkel)) {
         const lenDiff = Math.abs(fTokSkel.length - qTokSkel.length);
@@ -771,7 +780,7 @@ export default function App() {
     return { matched, summaryLabel, detectedType };
   };
 
-  // Instant Chat submit handler (Instant 0ms Local Memory Execution)
+  // Instant Chat submit handler (Non-blocking UI execution for 0ms INP)
   const handleSendChatMessage = (e?: React.FormEvent, customQuery?: string) => {
     if (e) e.preventDefault();
     const textToSend = (customQuery !== undefined ? customQuery : chatInputText).trim();
@@ -779,7 +788,7 @@ export default function App() {
 
     addToSearchHistory(textToSend);
 
-    // 1. Instantly append user message
+    // 1. Instantly append user message & clear input field (0ms frame update)
     const userMsgId = Date.now().toString();
     const userMsg: ChatMessage = {
       id: userMsgId,
@@ -789,45 +798,50 @@ export default function App() {
     };
 
     setChatInputText('');
+    setIsAiThinking(true);
+    setChatMessages((prev) => [...prev, userMsg]);
 
-    // 2. Instantly execute Thai fuzzy search in local memory (< 5ms)
-    const { matched: matchedResults, summaryLabel, detectedType } = smartFilterRecords(textToSend);
+    // 2. Yield to browser render thread before running search logic (solves INP input blocking)
+    setTimeout(() => {
+      const { matched: matchedResults, summaryLabel, detectedType } = smartFilterRecords(textToSend);
 
-    const topMatch = matchedResults[0];
-    let confidenceNote = '';
-    if (topMatch && topMatch.matchScore && topMatch.matchScore < 100 && topMatch.matchScore >= 80) {
-      confidenceNote = `\n(💡 สแกนพบชื่อที่ใกล้เคียงด้วยความแม่นยำประมาณ **${topMatch.matchScore}%**)`;
-    }
-
-    // 3. Generate instant fun, friendly bot response locally
-    let funReply = '';
-    if (matchedResults.length > 0) {
-      const greetings = [
-        `จัดไปครับผม! น้อง PEA Bot สแกนเจอพิกัด **${matchedResults.length} รายการ** ลุยหน้างานได้เลยคร้าบ! ⚡`,
-        `เรียบร้อยแล้วจ้า! สแกนพบพิกัดผู้ใช้ไฟ **${matchedResults.length} รายการ** ดูกดนำทาง Google Maps ด้านล่างได้เลยครับ 😎`,
-        `เจอแล้วครับป๋า! น้อง PEA Bot ค้นหาพิกัดมาให้ **${matchedResults.length} รายการ** พร้อมพิกัดจีพีเอสเลยครับ! 🚀`
-      ];
-      funReply = greetings[Math.floor(Math.random() * greetings.length)];
-    } else {
-      if (detectedType === 'ca') {
-        funReply = `อ๊ะ... น้อง PEA Bot ลองสแกนเลข CA "${textToSend}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองเช็คตัวเลขอีกทีนะฮะ! 🔍`;
-      } else if (detectedType === 'meter') {
-        funReply = `อ๊ะ... ลองสแกนเลข Meter "${textToSend}" แล้ว ไม่พบพิกัดเลยครับ ลองเช็คเลขเครื่องวัดอีกครั้งนะฮะ! ⚡`;
-      } else {
-        funReply = `น้อง PEA Bot สแกนดูแล้ว ไม่พบพิกัดที่ตรงหรือใกล้เคียงกับ "${textToSend}" ครับ ลองพิมพ์ชื่อ/ที่อยู่ใหม่ดูนะฮะ! 📌`;
+      const topMatch = matchedResults[0];
+      let confidenceNote = '';
+      if (topMatch && topMatch.matchScore && topMatch.matchScore < 100 && topMatch.matchScore >= 80) {
+        confidenceNote = `\n(💡 สแกนพบชื่อที่ใกล้เคียงด้วยความแม่นยำประมาณ **${topMatch.matchScore}%**)`;
       }
-    }
 
-    const aiMsg: ChatMessage = {
-      id: (Date.now() + 1).toString(),
-      sender: 'ai',
-      text: `${funReply}${confidenceNote}`,
-      timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
-      results: matchedResults,
-      extractedSummary: summaryLabel
-    };
+      // 3. Generate instant fun, friendly bot response locally
+      let funReply = '';
+      if (matchedResults.length > 0) {
+        const greetings = [
+          `จัดไปครับผม! น้อง PEA Bot สแกนเจอพิกัด **${matchedResults.length} รายการ** ลุยหน้างานได้เลยคร้าบ! ⚡`,
+          `เรียบร้อยแล้วจ้า! สแกนพบพิกัดผู้ใช้ไฟ **${matchedResults.length} รายการ** ดูกดนำทาง Google Maps ด้านล่างได้เลยครับ 😎`,
+          `เจอแล้วครับป๋า! น้อง PEA Bot ค้นหาพิกัดมาให้ **${matchedResults.length} รายการ** พร้อมพิกัดจีพีเอสเลยครับ! 🚀`
+        ];
+        funReply = greetings[Math.floor(Math.random() * greetings.length)];
+      } else {
+        if (detectedType === 'ca') {
+          funReply = `อ๊ะ... น้อง PEA Bot ลองสแกนเลข CA "${textToSend}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองเช็คตัวเลขอีกทีนะฮะ! 🔍`;
+        } else if (detectedType === 'meter') {
+          funReply = `อ๊ะ... ลองสแกนเลข Meter "${textToSend}" แล้ว ไม่พบพิกัดเลยครับ ลองเช็คเลขเครื่องวัดอีกครั้งนะฮะ! ⚡`;
+        } else {
+          funReply = `น้อง PEA Bot สแกนดูแล้ว ไม่พบพิกัดที่ตรงหรือใกล้เคียงกับ "${textToSend}" ครับ ลองพิมพ์ชื่อ/ที่อยู่ใหม่ดูนะฮะ! 📌`;
+        }
+      }
 
-    setChatMessages((prev) => [...prev, userMsg, aiMsg]);
+      const aiMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        sender: 'ai',
+        text: `${funReply}${confidenceNote}`,
+        timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
+        results: matchedResults,
+        extractedSummary: summaryLabel
+      };
+
+      setChatMessages((prev) => [...prev, aiMsg]);
+      setIsAiThinking(false);
+    }, 16);
   };
 
   const clearChatHistory = () => {
