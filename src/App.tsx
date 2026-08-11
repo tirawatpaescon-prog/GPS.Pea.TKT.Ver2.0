@@ -6,47 +6,34 @@ import {
   Zap, 
   Home, 
   Phone, 
-  Hash, 
   Compass, 
-  Search, 
-  AlertCircle,
-  X,
-  Share2,
-  Check,
-  Download,
-  Wifi,
-  WifiOff,
-  Database,
-  RefreshCw,
-  Map,
-  Activity,
-  Layers,
-  Copy,
-  ArrowUp,
-  ChevronDown,
-  Sun,
-  Moon,
-  History,
-  Clock,
+  Share2, 
+  Check, 
+  WifiOff, 
+  Database, 
+  Map, 
+  Copy, 
+  Sun, 
+  Moon, 
+  CloudDownload, 
+  CheckCircle2, 
+  Bot, 
+  Send, 
+  Sparkles, 
   Trash2,
-  CloudDownload,
-  CheckCircle2
+  RefreshCw,
+  Search,
+  History,
+  X
 } from 'lucide-react';
 
-// Define the shape of our CSV record dynamically
-interface PeaRecord {
+import peaBotMascotImg from './assets/images/pea_bot_mascot_1786454271309.jpg';
+
+export interface PeaRecord {
   [key: string]: string;
 }
 
-interface RecentSearch {
-  id: string;
-  meter: string;
-  ca: string;
-  address: string;
-  timestamp: string;
-}
-
-interface CompactFields {
+export interface CompactFields {
   fullName: string;
   address: string;
   ca: string;
@@ -56,7 +43,7 @@ interface CompactFields {
   otherFields: { key: string; val: string }[];
 }
 
-interface IndexedRecord {
+export interface IndexedRecord {
   record: PeaRecord;
   rowMeterLower: string;
   rowCaLower: string;
@@ -64,31 +51,140 @@ interface IndexedRecord {
   lat: string | null;
   lon: string | null;
   compactFields: CompactFields;
+  matchScore?: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp: string;
+  results?: IndexedRecord[];
+  extractedSummary?: string;
 }
 
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTsS3z2NT8lcdKRYE40bo1rPVIyc7EGJ0Hz5GkpWBD8STIpNzQS13sZAXSXn-1S90TWahJWLN2C_7Uj/pub?gid=1960280238&single=true&output=csv';
 
-// Helper to normalize Thai address text and abbreviations for robust searching
+// Normalize Thai text for smart address matching
 const normalizeThaiAddress = (text: string): string => {
   if (!text) return '';
   let s = text.toLowerCase();
 
-  // Standardize Moo prefixes (หมู่บ้าน / หมู่ที่ / หมู่ / ม. / ม) followed by optional spaces and digits
   s = s.replace(/(หมู่บ้าน|หมู่ที่|หมู่|ม\.|ม)\s*0*(\d+)/g, 'ม.$2');
-
-  // Standardize Thai address prefixes
   s = s.replace(/ตำบล\s*/g, 'ต.');
   s = s.replace(/อำเภอ\s*/g, 'อ.');
   s = s.replace(/จังหวัด\s*/g, 'จ.');
   s = s.replace(/ถนน\s*/g, 'ถ.');
   s = s.replace(/ซอย\s*/g, 'ซ.');
 
-  // Collapse multiple spaces
   s = s.replace(/\s+/g, ' ').trim();
   return s;
 };
 
-// Helper function to resolve coordinates from a row
+// Phonetic & Vowel-insensitive Thai skeleton generator
+const getThaiPhoneticSkeleton = (text: string): string => {
+  if (!text) return '';
+  let s = text.toLowerCase();
+  
+  // Remove tone marks and garun (่ ้ ๊ ๋ ็ ์)
+  s = s.replace(/[\u0E48-\u0E4C]/g, '');
+  
+  // Unify interchangeable Thai vowels (ิ ี ึ ื -> ิ, ุ ู -> ุ, ะ า ำ -> ะ, เ แ โ ใ ไ -> เ)
+  s = s.replace(/[ิีึื]/g, 'ิ');
+  s = s.replace(/[ุู]/g, 'ุ');
+  s = s.replace(/[ะาำ]/g, 'ะ');
+  s = s.replace(/[เแโใไ]/g, 'เ');
+  
+  return s;
+};
+
+// Optimized Levenshtein distance calculation for fuzzy matching (1D array allocation for maximum speed)
+const getLevenshteinDistance = (a: string, b: string): number => {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  let row = Array.from({ length: n + 1 }, (_, i) => i);
+  let nextRow = new Array(n + 1);
+
+  for (let i = 1; i <= m; i++) {
+    nextRow[0] = i;
+    const charA = a[i - 1];
+    for (let j = 1; j <= n; j++) {
+      const cost = charA === b[j - 1] ? 0 : 1;
+      nextRow[j] = Math.min(
+        row[j] + 1,        // deletion
+        nextRow[j - 1] + 1,// insertion
+        row[j - 1] + cost  // substitution
+      );
+    }
+    for (let k = 0; k <= n; k++) {
+      row[k] = nextRow[k];
+    }
+  }
+
+  return row[n];
+};
+
+// Calculate Thai name / string similarity percentage (85% - 100%)
+const calculateThaiSimilarity = (query: string, fullName: string, normRowText: string): number => {
+  if (!query) return 0;
+  const qNorm = query.toLowerCase().trim();
+  const fNorm = (fullName || '').toLowerCase().trim();
+  const rowNorm = (normRowText || '').toLowerCase().trim();
+
+  // 1. Direct exact substring match -> 100%
+  if (fNorm.includes(qNorm) || rowNorm.includes(qNorm)) {
+    return 100;
+  }
+
+  // 2. Thai Phonetic / Vowel Skeleton Comparison (e.g. วิรัช vs วีรัช, วึรัช, วืรัช)
+  const qSkel = getThaiPhoneticSkeleton(qNorm);
+  const fSkel = getThaiPhoneticSkeleton(fNorm);
+
+  if (qSkel.length >= 2 && fSkel.length >= 2) {
+    if (fSkel.includes(qSkel)) {
+      const ratio = qSkel.length / Math.max(qSkel.length, fSkel.length);
+      return Math.round(92 + ratio * 8); // 92% - 100%
+    }
+  }
+
+  // 3. Word token comparison with Levenshtein Distance
+  const qTokens = qNorm.split(/\s+/).filter(Boolean);
+  const fTokens = fNorm.split(/\s+/).filter(Boolean);
+
+  let bestMatch = 0;
+
+  for (const qTok of qTokens) {
+    const qTokSkel = getThaiPhoneticSkeleton(qTok);
+    if (qTokSkel.length < 2) continue;
+
+    for (const fTok of fTokens) {
+      const fTokSkel = getThaiPhoneticSkeleton(fTok);
+      if (fTokSkel.length < 2) continue;
+
+      if (fTokSkel.includes(qTokSkel) || qTokSkel.includes(fTokSkel)) {
+        const lenDiff = Math.abs(fTokSkel.length - qTokSkel.length);
+        const score = Math.max(88, 98 - lenDiff * 3);
+        if (score > bestMatch) bestMatch = score;
+      } else {
+        const dist = getLevenshteinDistance(qTokSkel, fTokSkel);
+        const maxLen = Math.max(qTokSkel.length, fTokSkel.length);
+        if (maxLen > 0) {
+          const sim = Math.round((1 - dist / maxLen) * 100);
+          if (sim >= 65 && sim > bestMatch) {
+            bestMatch = sim;
+          }
+        }
+      }
+    }
+  }
+
+  return bestMatch;
+};
+
+// Resolve latitude & longitude from dynamic CSV headers
 const resolveCoordinates = (record: PeaRecord) => {
   let lat: string | null = null;
   let lon: string | null = null;
@@ -122,7 +218,6 @@ const resolveCoordinates = (record: PeaRecord) => {
     }
   }
 
-  // Secondary fallback search
   if (!lat || !lon) {
     for (const [key, value] of Object.entries(record)) {
       const normKey = key.toLowerCase().trim();
@@ -141,7 +236,6 @@ const resolveCoordinates = (record: PeaRecord) => {
   return { lat, lon };
 };
 
-// Identify the best key for the Card Title
 const getPrimaryTitle = (record: PeaRecord): string => {
   const titleKeys = ['ชื่อ', 'ชื่อ-นามสกุล', 'ชื่อ - นามสกุล', 'ผู้ใช้ไฟ', 'name', 'customer', 'ชื่อผู้ใช้ไฟ', 'รายละเอียด'];
   for (const key of titleKeys) {
@@ -150,17 +244,11 @@ const getPrimaryTitle = (record: PeaRecord): string => {
       return record[foundKey];
     }
   }
-  for (const [key, val] of Object.entries(record)) {
-    const normK = key.toLowerCase();
-    if (val && !normK.includes('lat') && !normK.includes('lon') && !normK.includes('ลองจิ') && !normK.includes('ละติจูด')) {
-      return val;
-    }
-  }
-  return 'ผู้รับบริการ PEA';
+  return Object.values(record)[0] || 'ข้อมูลผู้ใช้ไฟฟ้า PEA';
 };
 
-// Compactly extract and combine key fields from a record
 const extractCompactFields = (record: PeaRecord): CompactFields => {
+  let fullName = '';
   let firstName = '';
   let lastName = '';
   let addressParts: string[] = [];
@@ -172,31 +260,72 @@ const extractCompactFields = (record: PeaRecord): CompactFields => {
 
   for (const [key, val] of Object.entries(record)) {
     if (!val) continue;
-    const v = val.trim();
+    const v = String(val).trim();
+    if (!v) continue;
     const kNorm = key.toLowerCase().trim();
 
-    if (kNorm === 'ชื่อ' || kNorm === 'name' || kNorm === 'ชื่อผู้ใช้ไฟ' || kNorm === 'ผู้ใช้ไฟ') {
+    if (
+      kNorm.includes('ชื่อ-นามสกุล') ||
+      kNorm.includes('ชื่อนามสกุล') ||
+      kNorm.includes('ชื่อผู้ใช้ไฟ') ||
+      kNorm === 'name' ||
+      kNorm === 'fullname'
+    ) {
+      fullName = v;
+    } else if (kNorm === 'ชื่อ' || kNorm.includes('first name') || kNorm === 'fname') {
       firstName = v;
-    } else if (kNorm === 'นามสกุล' || kNorm === 'surname' || kNorm === 'lastname' || kNorm === 'สกุล') {
+    } else if (kNorm === 'นามสกุล' || kNorm.includes('last name') || kNorm === 'lname') {
       lastName = v;
-    } else if (kNorm.includes('ชื่อ') && kNorm.includes('สกุล')) {
-      firstName = v;
-    } else if (kNorm === 'ca' || kNorm.includes('เลขคู่ค้า') || kNorm.includes('บัญชี') || kNorm.includes('contract') || kNorm.includes('เลขผู้ใช้ไฟ') || kNorm === 'รหัสคู่ค้า') {
-      ca = v;
-    } else if (kNorm.includes('meter') || kNorm.includes('เครื่องวัด') || kNorm.includes('มิเตอร์') || kNorm.includes('pea meter')) {
-      meter = v;
-    } else if (kNorm.includes('บ้านเลขที่') || kNorm === 'เลขที่' || kNorm.includes('address') || kNorm === 'ที่อยู่' || kNorm.includes('หมู่ที่') || kNorm === 'หมู่' || kNorm.includes('ถนน') || kNorm.includes('ตำบล') || kNorm.includes('อำเภอ')) {
-      addressParts.push(v);
-    } else if (kNorm.includes('โทร') || kNorm.includes('phone') || kNorm.includes('tel') || kNorm.includes('มือถือ')) {
-      phone = v;
-    } else if (kNorm.includes('สาย') || kNorm.includes('route') || kNorm.includes('สายป้อน') || kNorm.includes('feeder')) {
-      route = v;
     } else if (
-      !kNorm.includes('lat') &&
-      !kNorm.includes('lon') &&
-      !kNorm.includes('lng') &&
-      !kNorm.includes('ละติ') &&
-      !kNorm.includes('ลองจิ') &&
+      kNorm.includes('ที่อยู่') ||
+      kNorm.includes('บ้านเลขที่') ||
+      kNorm.includes('หมู่') ||
+      kNorm.includes('ตำบล') ||
+      kNorm.includes('อำเภอ') ||
+      kNorm.includes('address')
+    ) {
+      addressParts.push(v);
+    } else if (
+      kNorm.includes('ca') ||
+      kNorm.includes('บัญชี') ||
+      kNorm.includes('contract') ||
+      kNorm.includes('เลขผู้ใช้ไฟ') ||
+      kNorm.includes('รหัสคู่ค้า') ||
+      kNorm === 'bp' ||
+      kNorm === 'account'
+    ) {
+      if (!ca) ca = v;
+    } else if (
+      kNorm.includes('meter') ||
+      kNorm.includes('เครื่องวัด') ||
+      kNorm.includes('มิเตอร์') ||
+      kNorm === 'pea meter'
+    ) {
+      if (!meter) meter = v;
+    } else if (
+      kNorm.includes('เบอร์') ||
+      kNorm.includes('โทร') ||
+      kNorm.includes('phone') ||
+      kNorm.includes('tel') ||
+      kNorm.includes('mobile')
+    ) {
+      if (!phone) phone = v;
+    } else if (
+      kNorm.includes('สาย') ||
+      kNorm.includes('เส้นทาง') ||
+      kNorm.includes('route') ||
+      kNorm.includes('สายการอ่าน') ||
+      kNorm.includes('mr')
+    ) {
+      if (!route) route = v;
+    } else if (
+      kNorm !== 'lat' &&
+      kNorm !== 'latitude' &&
+      !kNorm.includes('ละติจูด') &&
+      kNorm !== 'lon' &&
+      kNorm !== 'lng' &&
+      kNorm !== 'longitude' &&
+      !kNorm.includes('ลองจิจูด') &&
       kNorm !== 'x' &&
       kNorm !== 'y'
     ) {
@@ -205,11 +334,22 @@ const extractCompactFields = (record: PeaRecord): CompactFields => {
   }
 
   const uniqueAddressParts = Array.from(new Set(addressParts));
-  const address = uniqueAddressParts.join(' ');
-  const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+  // Filter out shorter address parts that are already substrings of longer address parts
+  const cleanedParts = uniqueAddressParts.filter((part) => {
+    return !uniqueAddressParts.some((other) => other !== part && other.length > part.length && other.includes(part));
+  });
+
+  let address = cleanedParts.join(' ');
+
+  // Clean trailing house numbers or duplicate digits appended after Province name (e.g. จ.xxx 123/4)
+  if (/จ\.|จังหวัด|อ\.|อำเภอ/.test(address)) {
+    address = address.replace(/(จ\.[^\s\d]+|จังหวัด[^\s\d]+)(\s+[\d\/\-\.\w]+)+$/, '$1');
+  }
+
+  const finalFullName = lastName ? `${firstName} ${lastName}` : firstName;
 
   return {
-    fullName: fullName || getPrimaryTitle(record),
+    fullName: fullName || finalFullName || getPrimaryTitle(record),
     address,
     ca,
     meter,
@@ -219,17 +359,61 @@ const extractCompactFields = (record: PeaRecord): CompactFields => {
   };
 };
 
+// 3D Mascot Banner Component
+const PeaBot3DMascot = ({ isThinking }: { isThinking: boolean }) => {
+  return (
+    <div className="bg-gradient-to-r from-purple-900/60 via-slate-900 to-indigo-900/60 border border-purple-500/30 rounded-2xl p-2.5 mb-2 flex items-center gap-3 relative overflow-hidden shadow-lg backdrop-blur-sm group">
+      {/* Background Animated Glow */}
+      <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full blur-xl transition-all duration-500 ${isThinking ? 'bg-amber-500/40 animate-pulse scale-125' : 'bg-sky-500/20'}`} />
+      
+      {/* 3D Mascot Character Frame */}
+      <div className="relative shrink-0">
+        <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl overflow-hidden border-2 transition-all duration-300 shadow-lg ${isThinking ? 'border-amber-400 animate-bounce scale-105' : 'border-sky-400 group-hover:scale-105'}`}>
+          <img 
+            src={peaBotMascotImg} 
+            alt="3D PEA Bot Mascot" 
+            className={`w-full h-full object-cover transition-all duration-300 ${isThinking ? 'brightness-110 contrast-125' : ''}`}
+          />
+        </div>
+        {/* Animated Status Lightning Badge */}
+        <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border text-[10px] shadow-sm ${isThinking ? 'bg-amber-400 border-yellow-200 text-slate-950 animate-spin' : 'bg-emerald-400 border-emerald-200 text-slate-950 animate-pulse'}`}>
+          ⚡
+        </div>
+      </div>
+
+      {/* Mascot Animated Speech Bubble */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <span className="text-xs font-black text-amber-300 font-display">น้อง PEA Bot 3D</span>
+          <span className={`text-[8px] px-1.5 py-0.2 rounded-full font-bold ${isThinking ? 'bg-amber-400/30 text-amber-300 animate-pulse border border-amber-400/50' : 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/30'}`}>
+            {isThinking ? 'กำลังค้นหา...' : 'พร้อมลุย!'}
+          </span>
+        </div>
+        <p className="text-[11px] font-medium text-slate-200 leading-snug truncate">
+          {isThinking ? 'กำลังสแกนหาพิกัดให้อยู่คร้าบ แป๊บเดียวนะ! ⚡' : 'พิมพ์ CA, Meter หรือชื่อบ้านเลขที่ส่งมาเลยครับ! 😎'}
+        </p>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
-  // Search Bar States
-  const [searchMeter, setSearchMeter] = useState('');
-  const [searchCa, setSearchCa] = useState('');
-  const [searchAddressName, setSearchAddressName] = useState('');
+  const [chatInputText, setChatInputText] = useState('');
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const WELCOME_MSG_TEXT = 'หวัดดีครับ! น้อง PEA Bot พร้อมลุยแล้วจ้า ⚡\n\nพิมพ์ **เลข CA** (ขึ้นต้นด้วย 200), **เลข PEA Meter**, หรือ **ชื่อ/บ้านเลขที่** ส่งมาได้เลย เดี๋ยวผมสแกนหาพิกัดให้อย่างจ๊าบเลยครับ! 😎';
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: 'welcome-msg',
+      sender: 'ai',
+      text: WELCOME_MSG_TEXT,
+      timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+    }
+  ]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allRecords, setAllRecords] = useState<PeaRecord[]>([]);
-  const [searchResults, setSearchResults] = useState<IndexedRecord[] | null>(null);
-  const [displayLimit, setDisplayLimit] = useState(24);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'live' | 'cached' | 'error'>('cached');
   const [lastSyncFullDate, setLastSyncFullDate] = useState<string | null>(() => {
@@ -241,27 +425,65 @@ export default function App() {
   });
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  
-  // PWA installation states
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallBanner, setShowInstallBanner] = useState(false);
-  const [isInstalled, setIsInstalled] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState<string | number | null>(null);
 
-  // Mascot feedback text
-  const [mascotText, setMascotText] = useState('ยินดีต้อนรับฮะ! ป้อน PEA Meter, CA หรือ ชื่อ/บ้านเลขที่ เพื่อค้นหาพิกัดได้เลย!');
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-
-  // Back to top floating button visibility
-  const [showBackToTop, setShowBackToTop] = useState(false);
-
-  // Deep Night Dark Mode state with localStorage persistence
+  // Theme state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     try {
       return localStorage.getItem('pea_theme') === 'dark';
     } catch {
-      return false;
+      return true; // Default to sleek dark mode for high readability in field work
     }
   });
+
+  // Search History state backed by localStorage
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('pea_search_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const addToSearchHistory = (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    setSearchHistory((prev) => {
+      const filtered = prev.filter((item) => item.toLowerCase() !== trimmed.toLowerCase());
+      const updated = [trimmed, ...filtered].slice(0, 10);
+      try {
+        localStorage.setItem('pea_search_history', JSON.stringify(updated));
+      } catch (err) {
+        console.error(err);
+      }
+      return updated;
+    });
+  };
+
+  const clearSearchHistory = () => {
+    setSearchHistory([]);
+    try {
+      localStorage.removeItem('pea_search_history');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const removeSearchHistoryItem = (itemToRemove: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSearchHistory((prev) => {
+      const updated = prev.filter((item) => item !== itemToRemove);
+      try {
+        localStorage.setItem('pea_search_history', JSON.stringify(updated));
+      } catch (err) {
+        console.error(err);
+      }
+      return updated;
+    });
+  };
+
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -269,100 +491,21 @@ export default function App() {
       try {
         localStorage.setItem('pea_theme', 'dark');
       } catch (e) {
-        console.warn('Could not save theme preference:', e);
+        console.warn('Could not save theme:', e);
       }
     } else {
       document.documentElement.classList.remove('dark');
       try {
         localStorage.setItem('pea_theme', 'light');
       } catch (e) {
-        console.warn('Could not save theme preference:', e);
+        console.warn('Could not save theme:', e);
       }
     }
   }, [isDarkMode]);
 
-  const toggleTheme = () => {
-    setIsDarkMode((prev) => {
-      const next = !prev;
-      setMascotText(
-        next
-          ? 'เปิดใช้งานโหมด "Deep Night" (ธีมมืด) ถนอมสายตาสำหรับงานภาคสนามยามค่ำคืนแล้วฮะ! 🌙'
-          : 'สลับกลับเป็นธีมสว่าง อ่านง่าย สบายตาเรียบร้อยแล้วฮะ! ☀️'
-      );
-      return next;
-    });
-  };
+  const toggleTheme = () => setIsDarkMode((prev) => !prev);
 
-  // Recent Searches state with localStorage persistence
-  const [recentSearches, setRecentSearches] = useState<RecentSearch[]>(() => {
-    try {
-      const saved = localStorage.getItem('pea_recent_searches');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const saveRecentSearch = (m: string, c: string, a: string) => {
-    const mClean = m.trim();
-    const cClean = c.trim();
-    const aClean = a.trim();
-    if (!mClean && !cClean && !aClean) return;
-
-    setRecentSearches((prev) => {
-      const filtered = prev.filter(
-        (item) => !(item.meter === mClean && item.ca === cClean && item.address === aClean)
-      );
-      const newItem: RecentSearch = {
-        id: Date.now().toString(),
-        meter: mClean,
-        ca: cClean,
-        address: aClean,
-        timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
-      };
-      const updated = [newItem, ...filtered].slice(0, 10);
-      try {
-        localStorage.setItem('pea_recent_searches', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Could not save recent searches:', e);
-      }
-      return updated;
-    });
-  };
-
-  const removeRecentSearch = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setRecentSearches((prev) => {
-      const updated = prev.filter((item) => item.id !== id);
-      try {
-        localStorage.setItem('pea_recent_searches', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Could not save recent searches:', e);
-      }
-      return updated;
-    });
-  };
-
-  const clearRecentSearches = () => {
-    setRecentSearches([]);
-    try {
-      localStorage.removeItem('pea_recent_searches');
-    } catch (e) {
-      console.warn('Could not clear recent searches:', e);
-    }
-  };
-
-  const handleSelectRecentSearch = (item: RecentSearch) => {
-    setSearchMeter(item.meter);
-    setSearchCa(item.ca);
-    setSearchAddressName(item.address);
-    executeSearch(item.meter, item.ca, item.address);
-  };
-
-  // Ref to search input for rapid focus
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // Pre-index records in memory for zero-latency instant search
+  // Pre-index records for fast client search
   const indexedRecords = useMemo<IndexedRecord[]>(() => {
     return allRecords.map((row) => {
       let rowMeterStr = '';
@@ -414,25 +557,14 @@ export default function App() {
     });
   }, [allRecords]);
 
-  // Scroll listener for Back to Top button
+  // Scroll to bottom when new chat messages arrive
   useEffect(() => {
-    const handleScroll = () => {
-      if (window.scrollY > 250) {
-        setShowBackToTop(true);
-      } else {
-        setShowBackToTop(false);
-      }
-    };
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages, isAiThinking]);
 
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  // Monitor network status
+  // Listen for network status
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
@@ -440,45 +572,14 @@ export default function App() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
-    setIsInstalled(!!isStandalone);
-
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
-  // Listen for PWA BeforeInstallPromptEvent
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      if (!isInstalled) {
-        setShowInstallBanner(true);
-      }
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
-    window.addEventListener('appinstalled', () => {
-      setIsInstalled(true);
-      setShowInstallBanner(false);
-      setDeferredPrompt(null);
-      setMascotText('สุดยอด! ติดตั้งเสร็จเรียบร้อย พร้อมลุยหน้างานแล้วฮะ! 🎉');
-    });
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    };
-  }, [isInstalled]);
-
-  // Fetch database (CSV)
+  // Fetch Google Sheets Database
   const fetchDatabase = async (forceRefresh = false): Promise<PeaRecord[]> => {
-    if (allRecords.length > 0 && !forceRefresh) {
-      return allRecords;
-    }
-
     const localCacheStr = localStorage.getItem('pea_records_cache');
     const localCacheTime = localStorage.getItem('pea_records_cache_time');
     const localCacheFullDate = localStorage.getItem('pea_records_cache_fulldate');
@@ -489,7 +590,7 @@ export default function App() {
       
       try {
         const response = await fetch(targetUrl, { cache: forceRefresh ? 'no-cache' : 'default' });
-        if (!response.ok) throw new Error(`ไม่สามารถดึงข้อมูลได้ (HTTP ${response.status})`);
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
         csvText = await response.text();
       } catch (directErr) {
         csvText = await new Promise<string>((resolve, reject) => {
@@ -497,10 +598,9 @@ export default function App() {
             download: true,
             complete: (results) => {
               if (results.data && Array.isArray(results.data) && results.data.length > 0) {
-                const unparsed = Papa.unparse(results.data);
-                resolve(unparsed);
+                resolve(Papa.unparse(results.data));
               } else {
-                reject(new Error('ไม่สามารถโหลดข้อมูลผ่านช่องทางสำรองได้'));
+                reject(new Error('ไม่สามารถดึงข้อมูลได้'));
               }
             },
             error: (err) => reject(err)
@@ -525,9 +625,8 @@ export default function App() {
                 month: 'short',
                 year: 'numeric',
                 hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-              }) + ' น.';
+                minute: '2-digit'
+              });
 
               setLastUpdated(nowShort);
               setLastSyncFullDate(nowFull);
@@ -538,16 +637,14 @@ export default function App() {
                 localStorage.setItem('pea_records_cache_time', nowShort);
                 localStorage.setItem('pea_records_cache_fulldate', nowFull);
               } catch (e) {
-                console.warn('Could not write to localStorage cache:', e);
+                console.warn('LocalStorage Cache warning:', e);
               }
               resolve(data);
             } else {
-              reject(new Error('ข้อมูล CSV ที่ได้รับว่างเปล่า'));
+              reject(new Error('ข้อมูล CSV ว่างเปล่า'));
             }
           },
-          error: () => {
-            reject(new Error('เกิดข้อผิดพลาดในการอ่านรูปแบบไฟล์ CSV'));
-          }
+          error: () => reject(new Error('อ่านไฟล์ CSV ล้มเหลว'))
         });
       });
     } catch (err: any) {
@@ -562,949 +659,556 @@ export default function App() {
             return cachedData;
           }
         } catch (e) {
-          console.error('Failed to parse cached data:', e);
+          console.error('Parsed cache error:', e);
         }
       }
 
       setSyncStatus('error');
-      const isFetchErr = err?.message?.toLowerCase().includes('fetch') || err?.name === 'TypeError';
-      const userMessage = isFetchErr
-        ? 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ Google Sheets ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต'
-        : (err?.message || 'เครือข่ายขัดข้อง กรุณาลองใหม่อีกครั้ง');
-
-      throw new Error(userMessage);
+      throw err;
     }
   };
 
   const handleForceSync = async () => {
     setIsSyncing(true);
     setLoading(true);
-    setMascotText('กำลังบังคับซิงก์ข้อมูลสดตรงจาก Google Sheets กรุณารอสักครู่ฮะ... 🔄');
     try {
       const data = await fetchDatabase(true);
       setError(null);
-      setMascotText(`บังคับซิงก์ข้อมูลจาก Google Sheets สำเร็จเรียบร้อย! อัปเดตพิกัดทั้งหมด ${data.length.toLocaleString()} รายการล่าสุดฮะ ⚡`);
     } catch (err: any) {
-      setError(`การบังคับซิงก์ขัดข้อง: ${err?.message || 'ไม่สามารถโหลดข้อมูลสดได้'}`);
-      setMascotText('เกิดข้อผิดพลาดในการซิงก์สดจาก Google Sheets ระบบจะสลับไปใช้แคชในเครื่องฮะ');
+      setError(`ซิงก์ข้อมูลขัดข้อง: ${err?.message || 'โปรดตรวจสอบการเชื่อมต่อ'}`);
     } finally {
       setIsSyncing(false);
       setLoading(false);
     }
   };
 
-  // Pre-load data on launch
+  // Launch initial load
   useEffect(() => {
     const localCacheStr = localStorage.getItem('pea_records_cache');
-    const localCacheTime = localStorage.getItem('pea_records_cache_time');
-    let hasLocalData = false;
-
     if (localCacheStr) {
       try {
         const cached = JSON.parse(localCacheStr) as PeaRecord[];
-        if (cached && cached.length > 0) {
-          setAllRecords(cached);
-          if (localCacheTime) setLastUpdated(localCacheTime);
-          hasLocalData = true;
-          setMascotText(`โหลดข้อมูลจากแคชในเครื่องสำเร็จ (${cached.length} รายการ)! พร้อมค้นหาพิกัดเลยฮะ! ⚡`);
-        }
-      } catch (e) {
-        // ignore
-      }
+        if (cached && cached.length > 0) setAllRecords(cached);
+      } catch (e) {}
     }
 
     setLoading(true);
     fetchDatabase(true)
-      .then((data) => {
-        setMascotText(`เชื่อมต่อพิกัดเสร็จสมบูรณ์! อัปเดตข้อมูลล่าสุดเรียบร้อย (${data.length} รายการ) ⚡`);
-        setError(null);
-      })
-      .catch((err) => {
-        if (!hasLocalData) {
-          setError(err.message || 'ไม่สามารถเชื่อมต่อฐานข้อมูลได้ ณ ขณะนี้');
-          setMascotText('อุ๊ย... ไม่สามารถดึงข้อมูลได้ในขณะนี้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่อีกครั้งนะฮะ!');
-        } else {
-          setMascotText('เชื่อมต่อฐานข้อมูลสดไม่ได้ แต่ระบบกำลังใช้งานข้อมูลที่บันทึกไว้ในแคชแทนฮะ! ⚡');
-        }
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
-  // Lightning-fast search executing in ~1ms over indexedRecords
-  const executeSearch = (overrideMeter?: string, overrideCa?: string, overrideAddressName?: string) => {
-    const meterQuery = (overrideMeter !== undefined ? overrideMeter : searchMeter).trim();
-    const caQuery = (overrideCa !== undefined ? overrideCa : searchCa).trim();
-    const addrQuery = (overrideAddressName !== undefined ? overrideAddressName : searchAddressName).trim();
+  // Smart Filtering Engine with Thai Fuzzy Phonetic Search (85-100% Accuracy)
+  const smartFilterRecords = (queryText: string, meter?: string | null, ca?: string | null, addressName?: string | null): { matched: IndexedRecord[]; summaryLabel: string; detectedType: string } => {
+    const raw = queryText.trim().toLowerCase();
+    const pureDigits = raw.replace(/[^0-9]/g, '');
 
-    if (!meterQuery && !caQuery && !addrQuery) {
-      setError('กรุณากรอกข้อมูลอย่างน้อย 1 ช่องนะฮะ (PEA Meter, CA หรือ ชื่อ/บ้านเลขที่)');
-      setMascotText('ป้อนข้อมูลในช่องใดช่องหนึ่งก่อนสิฮะ ไม่งั้นปุ่มแสกนจะทำงานไม่ได้นะเนี้ย! 😅');
-      return;
+    // Determine target filter strategy
+    let searchMeter = meter || null;
+    let searchCa = ca || null;
+    let searchAddr = addressName || null;
+    let detectedType = 'text';
+
+    if (!searchMeter && !searchCa && !searchAddr) {
+      if (pureDigits.startsWith('200') || pureDigits.length >= 10) {
+        searchCa = pureDigits;
+        detectedType = 'ca';
+      } else if (pureDigits.length >= 4 && pureDigits.length <= 9 && !/[a-zA-Zก-ฮ]/.test(raw)) {
+        searchMeter = pureDigits;
+        detectedType = 'meter';
+      } else {
+        searchAddr = raw;
+        detectedType = 'address';
+      }
     }
 
-    saveRecentSearch(meterQuery, caQuery, addrQuery);
-
-    setError(null);
-    setDisplayLimit(24);
-
-    const meterTerms = meterQuery ? meterQuery.toLowerCase().split(/\s+/).filter(Boolean) : [];
-    const caTerms = caQuery ? caQuery.toLowerCase().split(/\s+/).filter(Boolean) : [];
-    const normAddrQ = addrQuery ? normalizeThaiAddress(addrQuery).toLowerCase() : '';
-    const addrTerms = normAddrQ ? normAddrQ.split(/\s+/).filter(Boolean) : [];
-
-    // Filter using pre-indexed lowercased strings
     const matched: IndexedRecord[] = [];
+    const normQ = normalizeThaiAddress(searchAddr || raw).toLowerCase();
+    const terms = normQ.split(/\s+/).filter(Boolean);
 
     for (let i = 0; i < indexedRecords.length; i++) {
       const item = indexedRecords[i];
 
-      if (meterTerms.length > 0) {
-        if (!meterTerms.every((term) => item.rowMeterLower.includes(term))) continue;
-      }
+      if (searchCa) {
+        if (item.rowCaLower.includes(searchCa.toLowerCase())) {
+          matched.push({ ...item, matchScore: 100 });
+        }
+      } else if (searchMeter) {
+        if (item.rowMeterLower.includes(searchMeter.toLowerCase())) {
+          matched.push({ ...item, matchScore: 100 });
+        }
+      } else {
+        // Name / Address / Thai Fuzzy Search
+        let score = 0;
 
-      if (caTerms.length > 0) {
-        if (!caTerms.every((term) => item.rowCaLower.includes(term))) continue;
-      }
-
-      if (addrTerms.length > 0) {
-        if (!addrTerms.every((term) => item.rowNameAddrNorm.includes(term))) continue;
-      }
-
-      matched.push(item);
-    }
-
-    if (matched.length === 0) {
-      setSearchResults([]);
-      setError('ไม่พบข้อมูลตามเงื่อนไขการคัดกรองที่ท่านระบุ');
-      setMascotText('ค้นหาเรียบร้อยแล้วฮะ... ไม่พบข้อมูลที่ตรงกับเงื่อนไขที่คัดกรองเลย 🥺');
-      return;
-    }
-
-    // Score matching records
-    const scored = matched.map((item) => {
-      let score = 0;
-
-      if (meterQuery) {
-        const mQ = meterQuery.toLowerCase().trim();
-        if (item.rowMeterLower === mQ) score += 10000;
-        else if (item.rowMeterLower.startsWith(mQ)) score += 2000;
-        else score += 500;
-      }
-
-      if (caQuery) {
-        const cQ = caQuery.toLowerCase().trim();
-        if (item.rowCaLower === cQ) score += 10000;
-        else if (item.rowCaLower.startsWith(cQ)) score += 2000;
-        else score += 500;
-      }
-
-      if (normAddrQ) {
-        if (item.rowNameAddrNorm === normAddrQ) score += 10000;
-        else if (item.rowNameAddrNorm.startsWith(normAddrQ)) score += 4000;
-        else if (item.rowNameAddrNorm.includes(normAddrQ)) score += 2000;
-
-        for (const term of addrTerms) {
-          if (item.rowNameAddrNorm.includes(term)) score += 500;
+        // Exact term match check
+        if (terms.length > 0 && terms.every((t) => item.rowNameAddrNorm.includes(t))) {
+          score = 100;
+        } else {
+          // Calculate Thai phonetic & Levenshtein similarity score for names
+          score = calculateThaiSimilarity(raw, item.compactFields.fullName, item.rowNameAddrNorm);
         }
 
-        score -= item.rowNameAddrNorm.length * 0.05;
+        if (score >= 65) {
+          matched.push({ ...item, matchScore: score });
+        }
       }
-
-      return { item, score };
-    });
-
-    scored.sort((a, b) => b.score - a.score);
-    const sortedResults = scored.map((s) => s.item);
-
-    setSearchResults(sortedResults);
-    setError(null);
-    setMascotText(`ค้นหาสำเร็จ! ตรวจพบข้อมูลพิกัดไฟฟ้า PEA ตรงเงื่อนไข จำนวน ${sortedResults.length} รายการ 🚀`);
-  };
-
-  // Handle Search Submission on button click or form submit
-  const handleSearch = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (searchInputRef.current) {
-      searchInputRef.current.blur();
     }
-    executeSearch();
-  };
 
-  // Clear all search fields
-  const handleClearAll = () => {
-    setSearchMeter('');
-    setSearchCa('');
-    setSearchAddressName('');
-    setSearchResults(null);
-    setError(null);
-    setDisplayLimit(24);
-    setMascotText('ล้างข้อมูลค้นหาเรียบร้อยฮะ! ป้อนข้อมูลแล้วกดสแกนค้นหาได้เลย');
-  };
+    // Sort matched records by highest similarity score first
+    matched.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
 
-  // Reset search results if all inputs are completely cleared
-  useEffect(() => {
-    if (!searchMeter.trim() && !searchCa.trim() && !searchAddressName.trim()) {
-      setSearchResults(null);
-      setError(null);
-      setDisplayLimit(24);
-      setMascotText('ยินดีต้อนรับฮะ! ป้อน PEA Meter, CA หรือ ชื่อ/บ้านเลขที่ เพื่อค้นหาพิกัดได้เลย!');
-    }
-  }, [searchMeter, searchCa, searchAddressName]);
-
-  // Open Google Maps URL for a record
-  const openGoogleMaps = (lat: string | null, lon: string | null) => {
-    if (lat && lon) {
-      const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
-      window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+    let summaryLabel = '';
+    if (searchCa || detectedType === 'ca') {
+      summaryLabel = `📌 ค้นหาเลขผู้ใช้ไฟ CA (${matched.length} รายการ)`;
+    } else if (searchMeter || detectedType === 'meter') {
+      summaryLabel = `⚡ ค้นหาเลขเครื่องวัด Meter (${matched.length} รายการ)`;
     } else {
-      alert('ไม่สามารถเปิดแผนที่ได้เนื่องจากไม่พบคอลัมน์พิกัดละติจูด/ลองจิจูดในผู้ใช้งานรายนี้');
+      const highConfidence = matched.filter(m => (m.matchScore || 0) >= 85).length;
+      summaryLabel = `🔍 สแกนสระ/ชื่อใกล้เคียง (${matched.length} รายการ | แม่นยำสูง ${highConfidence} รายการ)`;
     }
+
+    return { matched, summaryLabel, detectedType };
   };
 
-  // Copy coordinates to clipboard
-  const copyCoordinates = (lat: string, lon: string, index: number) => {
-    const coordsText = `${lat},${lon}`;
+  // Instant Chat submit handler (Instant 0ms Local Memory Execution)
+  const handleSendChatMessage = (e?: React.FormEvent, customQuery?: string) => {
+    if (e) e.preventDefault();
+    const textToSend = (customQuery !== undefined ? customQuery : chatInputText).trim();
+    if (!textToSend || isAiThinking) return;
+
+    addToSearchHistory(textToSend);
+
+    // 1. Instantly append user message
+    const userMsgId = Date.now().toString();
+    const userMsg: ChatMessage = {
+      id: userMsgId,
+      sender: 'user',
+      text: textToSend,
+      timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setChatInputText('');
+
+    // 2. Instantly execute Thai fuzzy search in local memory (< 5ms)
+    const { matched: matchedResults, summaryLabel, detectedType } = smartFilterRecords(textToSend);
+
+    const topMatch = matchedResults[0];
+    let confidenceNote = '';
+    if (topMatch && topMatch.matchScore && topMatch.matchScore < 100 && topMatch.matchScore >= 80) {
+      confidenceNote = `\n(💡 สแกนพบชื่อที่ใกล้เคียงด้วยความแม่นยำประมาณ **${topMatch.matchScore}%**)`;
+    }
+
+    // 3. Generate instant fun, friendly bot response locally
+    let funReply = '';
+    if (matchedResults.length > 0) {
+      const greetings = [
+        `จัดไปครับผม! น้อง PEA Bot สแกนเจอพิกัด **${matchedResults.length} รายการ** ลุยหน้างานได้เลยคร้าบ! ⚡`,
+        `เรียบร้อยแล้วจ้า! สแกนพบพิกัดผู้ใช้ไฟ **${matchedResults.length} รายการ** ดูกดนำทาง Google Maps ด้านล่างได้เลยครับ 😎`,
+        `เจอแล้วครับป๋า! น้อง PEA Bot ค้นหาพิกัดมาให้ **${matchedResults.length} รายการ** พร้อมพิกัดจีพีเอสเลยครับ! 🚀`
+      ];
+      funReply = greetings[Math.floor(Math.random() * greetings.length)];
+    } else {
+      if (detectedType === 'ca') {
+        funReply = `อ๊ะ... น้อง PEA Bot ลองสแกนเลข CA "${textToSend}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองเช็คตัวเลขอีกทีนะฮะ! 🔍`;
+      } else if (detectedType === 'meter') {
+        funReply = `อ๊ะ... ลองสแกนเลข Meter "${textToSend}" แล้ว ไม่พบพิกัดเลยครับ ลองเช็คเลขเครื่องวัดอีกครั้งนะฮะ! ⚡`;
+      } else {
+        funReply = `น้อง PEA Bot สแกนดูแล้ว ไม่พบพิกัดที่ตรงหรือใกล้เคียงกับ "${textToSend}" ครับ ลองพิมพ์ชื่อ/ที่อยู่ใหม่ดูนะฮะ! 📌`;
+      }
+    }
+
+    const aiMsg: ChatMessage = {
+      id: (Date.now() + 1).toString(),
+      sender: 'ai',
+      text: `${funReply}${confidenceNote}`,
+      timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
+      results: matchedResults,
+      extractedSummary: summaryLabel
+    };
+
+    setChatMessages((prev) => [...prev, userMsg, aiMsg]);
+  };
+
+  const clearChatHistory = () => {
+    setChatMessages([
+      {
+        id: 'welcome-msg',
+        sender: 'ai',
+        text: WELCOME_MSG_TEXT,
+        timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+      }
+    ]);
+  };
+
+  const openGoogleMaps = (lat: string, lon: string) => {
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const copyCoordinates = (lat: string, lon: string, indexKey: string | number) => {
+    const textToCopy = `${lat}, ${lon}`;
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(coordsText);
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        setCopiedIndex(indexKey);
+        setTimeout(() => setCopiedIndex(null), 2500);
+      });
     } else {
       const textArea = document.createElement('textarea');
-      textArea.value = coordsText;
+      textArea.value = textToCopy;
       document.body.appendChild(textArea);
       textArea.select();
       document.execCommand('copy');
       document.body.removeChild(textArea);
+      setCopiedIndex(indexKey);
+      setTimeout(() => setCopiedIndex(null), 2500);
     }
-    setCopiedIndex(index);
-    setTimeout(() => {
-      setCopiedIndex(null);
-    }, 2000);
   };
 
-  // Share coordinates via Web Share API
-  const shareCoordinates = async (fields: CompactFields, lat: string, lon: string) => {
+  const shareCoordinates = (fields: CompactFields, lat: string, lon: string) => {
+    const title = `พิกัด PEA - ${fields.fullName}`;
     const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
-    const shareText = `📍 พิกัดไฟฟ้า PEA: ${fields.fullName}${fields.ca ? `\n⚡ CA: ${fields.ca}` : ''}${fields.meter ? `\n🔌 Meter: ${fields.meter}` : ''}${fields.address ? `\n🏠 ที่อยู่: ${fields.address}` : ''}\n📌 พิกัด: ${lat},${lon}`;
+    const text = `📍 พิกัด PEA: ${fields.fullName}\n🏠 ที่อยู่: ${fields.address || '-'}\n⚡ Meter: ${fields.meter || '-'}\n📌 CA: ${fields.ca || '-'}\n🗺️ พิกัด: ${lat}, ${lon}\n🔗 แผนที่: ${mapsUrl}`;
 
     if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `พิกัด PEA - ${fields.fullName}`,
-          text: shareText,
-          url: mapsUrl
-        });
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.error('Error sharing:', err);
-        }
-      }
+      navigator.share({ title, text, url: mapsUrl }).catch(() => {});
     } else {
-      copyCoordinates(lat, lon, -1);
-      alert('เบราว์เซอร์นี้ไม่รองรับระบบแชร์โดยตรง ระบบได้คัดลอกพิกัดลงคลิปบอร์ดให้ท่านเรียบร้อยแล้วฮะ!');
-    }
-  };
-
-  // Trigger PWA Installation Flow
-  const triggerPwaInstall = async () => {
-    if (!deferredPrompt) return;
-    setShowInstallBanner(false);
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log(`[PWA] User response: ${outcome}`);
-    setDeferredPrompt(null);
-  };
-
-  // Auto-fill template searches
-  const handleQuickSearch = (type: 'meter' | 'ca' | 'address', term: string) => {
-    if (type === 'meter') {
-      setSearchMeter(term);
-      setSearchCa('');
-      setSearchAddressName('');
-      executeSearch(term, '', '');
-    } else if (type === 'ca') {
-      setSearchMeter('');
-      setSearchCa(term);
-      setSearchAddressName('');
-      executeSearch('', term, '');
-    } else {
-      setSearchMeter('');
-      setSearchCa('');
-      setSearchAddressName(term);
-      executeSearch('', '', term);
+      copyCoordinates(lat, lon, 'share');
+      alert('คัดลอกข้อความพิกัดสำหรับแชร์แล้ว:\n\n' + text);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#EEF2F6] dark:bg-[#0B132B] pb-20 sm:pb-24 px-3 sm:px-4 pt-3 sm:pt-4 font-sans text-slate-800 dark:text-slate-100 flex flex-col items-center selection:bg-indigo-100 dark:selection:bg-sky-900 transition-colors duration-300">
+    <div className="min-h-screen bg-[#0B0F19] dark:bg-[#070A12] text-slate-100 font-sans flex flex-col items-center justify-between p-2 sm:p-4 select-none transition-colors duration-300">
       
-      {/* Top Floating Control Capsule (Theme Toggle + Network Status) */}
-      <div className="fixed top-2.5 right-2.5 sm:top-4 sm:right-4 z-50 flex items-center gap-1.5 sm:gap-2">
-        {/* Theme Toggle Capsule */}
-        <button
-          type="button"
-          onClick={toggleTheme}
-          aria-label="Toggle theme"
-          title={isDarkMode ? "สลับเป็นธีมสว่าง" : "สลับเป็นโหมดกลางคืน Deep Night"}
-          className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full border-2 sm:border-3 text-[11px] sm:text-xs font-black shadow-md transition-all duration-300 border-[#1E293B] dark:border-sky-400 bg-white dark:bg-slate-800 text-slate-800 dark:text-sky-300 shadow-[2px_2px_0px_#1E293B] dark:shadow-[2px_2px_0px_#0284C7] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
-        >
-          {isDarkMode ? (
-            <>
-              <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-300 fill-current" />
-              <span className="hidden sm:inline">Deep Night</span>
-            </>
-          ) : (
-            <>
-              <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500 fill-current" />
-              <span className="hidden sm:inline">โหมดสว่าง</span>
-            </>
-          )}
-        </button>
-
-        {/* Network Status Capsule */}
-        <div className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-full border-2 sm:border-3 text-[11px] sm:text-xs font-black shadow-md transition-all duration-300 border-[#1E293B] dark:border-sky-400 ${
-          isOffline 
-          ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200 shadow-[2px_2px_0px_#1E293B] dark:shadow-[2px_2px_0px_#0284C7] animate-pulse' 
-          : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200 shadow-[2px_2px_0px_#1E293B] dark:shadow-[2px_2px_0px_#0284C7]'
-        }`}>
-          {isOffline ? (
-            <>
-              <WifiOff className="w-3.5 h-3.5 sm:w-4.5 sm:h-4.5" />
-              <span className="hidden sm:inline">ออฟไลน์</span>
-            </>
-          ) : (
-            <>
-              <Wifi className="w-3.5 h-3.5 sm:w-4.5 sm:h-4.5 text-emerald-600 dark:text-emerald-400 animate-cyber-pulse" />
-              <span className="hidden sm:inline">เชื่อม PEA</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Main Header */}
-      <header className="w-full max-w-md md:max-w-2xl lg:max-w-3xl text-center mt-3 sm:mt-6 mb-3 sm:mb-6 flex flex-col items-center">
-        <div className="relative group mb-2 sm:mb-3">
-          <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 via-sky-400 to-amber-300 rounded-full blur opacity-75 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 animate-pulse"></div>
-          <div className="relative w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 rounded-full bg-white dark:bg-slate-800 border-3 sm:border-4 border-[#1E293B] dark:border-sky-400 flex items-center justify-center overflow-hidden shadow-lg">
-            <img 
-              src="/icon.jpg" 
-              alt="PEA TKT Logo" 
-              className="w-full h-full object-cover transform hover:scale-110 transition duration-300"
-              onError={(e) => {
-                (e.target as HTMLElement).style.display = 'none';
-              }}
-            />
-            <Zap className="absolute w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 text-[#FDE047] fill-current animate-bounce" />
+      {/* MOBILE-FIRST HEADER */}
+      <header className="w-full max-w-lg mb-2">
+        <div className="bg-slate-900/95 dark:bg-slate-950/95 border-2 border-slate-800 dark:border-sky-500/50 rounded-2xl p-2.5 shadow-lg flex items-center justify-between gap-2">
+          
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-10 h-10 rounded-xl border-2 border-sky-400 overflow-hidden shrink-0 shadow-md transform hover:rotate-6 transition-all bg-slate-950">
+              <img src={peaBotMascotImg} alt="PEA Bot 3D" className="w-full h-full object-cover" />
+            </div>
+            
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-sm font-black text-white tracking-tight font-display truncate">
+                  GPS.Pea.TKT
+                </h1>
+                <span className="text-[9px] bg-sky-500/20 text-sky-300 border border-sky-400/30 px-1.5 py-0.2 rounded-full font-mono font-bold">
+                  AI 3D Bot
+                </span>
+              </div>
+              <p className="text-[10px] font-bold text-slate-400 truncate">
+                สแกนพิกัดผู้ใช้ไฟ PEA {allRecords.length ? `(${allRecords.length.toLocaleString()} รายการ)` : ''}
+              </p>
+            </div>
           </div>
-          <span className="absolute -bottom-1 -right-1 bg-[#FDE047] text-[#1E293B] text-[9px] sm:text-xxs px-2 py-0.5 rounded-md font-black border-2 sm:border-3 border-[#1E293B] rotate-12 shadow-[2px_2px_0px_#1E293B]">
-            GPS.Pea.TKT
-          </span>
+
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Force Sync Button */}
+            <button
+              type="button"
+              disabled={loading || isSyncing}
+              onClick={handleForceSync}
+              className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-sky-300 rounded-xl border border-slate-700 transition-all cursor-pointer"
+              title="บังคับซิงก์ข้อมูลสดจาก Google Sheets"
+            >
+              <CloudDownload className={`w-4 h-4 ${isSyncing ? 'animate-bounce text-yellow-300' : ''}`} />
+            </button>
+
+            {/* Clear Chat Button */}
+            <button
+              type="button"
+              onClick={clearChatHistory}
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 rounded-xl border border-slate-700 transition-all cursor-pointer"
+              title="ล้างแชท"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+
+            {/* Dark Mode Toggle */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl border border-slate-700 transition-all cursor-pointer"
+              title="สลับธีม"
+            >
+              {isDarkMode ? <Sun className="w-4 h-4 text-amber-300" /> : <Moon className="w-4 h-4 text-sky-300" />}
+            </button>
+          </div>
         </div>
-
-        <h1 className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tight text-[#1E293B] dark:text-slate-100 font-display uppercase">
-          GPS.Pea.TKT
-        </h1>
-        <p className="text-[10px] sm:text-xs text-indigo-600 dark:text-sky-400 font-black tracking-widest uppercase mt-0.5 sm:mt-1">
-          ⚡ FIELD SERVICE TOOL ⚡
-        </p>
-
-        {/* Theme Toggle Button in Header */}
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className="mt-2.5 sm:mt-3 cyber-btn bg-white dark:bg-slate-800 text-[#1E293B] dark:text-slate-100 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-black flex items-center gap-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors shadow-sm"
-        >
-          {isDarkMode ? (
-            <>
-              <Sun className="w-4 h-4 text-amber-400 fill-current animate-spin-slow" />
-              <span>โหมดปัจจุบัน: <strong className="text-sky-400">Deep Night 🌙</strong> — คลิกเปลี่ยนเป็นธีมสว่าง</span>
-            </>
-          ) : (
-            <>
-              <Moon className="w-4 h-4 text-indigo-600 fill-current" />
-              <span>โหมดปัจจุบัน: <strong className="text-indigo-600">ธีมสว่าง ☀️</strong> — คลิกเปลี่ยนเป็น Deep Night</span>
-            </>
-          )}
-        </button>
       </header>
 
-      {/* Mascot / Interactive Advice Box */}
-      <div className="w-full max-w-md md:max-w-2xl lg:max-w-3xl bg-white dark:bg-slate-800 border-3 sm:border-4 border-[#1E293B] dark:border-sky-400 rounded-xl sm:rounded-2xl p-3 sm:p-4 mb-4 sm:mb-6 shadow-[3px_3px_0px_#334155] dark:shadow-[3px_3px_0px_#0284C7] sm:shadow-[4px_4px_0px_#334155] relative overflow-hidden flex gap-2.5 sm:gap-3.5 items-center">
-        <div className="absolute top-0 left-0 h-1 bg-gradient-to-r from-indigo-500 to-sky-500 w-full"></div>
-        
-        <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl bg-[#FEF08A] border-2 sm:border-3 border-[#1E293B] flex items-center justify-center shrink-0 shadow-[2px_2px_0px_#1E293B]">
-          <Activity className="w-5 h-5 sm:w-7 sm:h-7 text-[#1E293B] animate-pulse" />
-        </div>
-        
-        <div className="flex-1">
-          <p className="text-[9px] sm:text-[10px] text-indigo-600 dark:text-sky-400 font-black uppercase tracking-widest mb-0.5">PEA-BOT แนะนำ:</p>
-          <p className="text-xs text-[#1E293B] dark:text-slate-100 font-bold leading-snug sm:leading-relaxed font-sans">{mascotText}</p>
-        </div>
-      </div>
-
-      {/* Core Search Panel */}
-      <section className="w-full max-w-md md:max-w-2xl lg:max-w-3xl cyber-card p-3.5 sm:p-5 md:p-6 mb-4 sm:mb-6">
-        <div className="flex justify-between items-center mb-3 sm:mb-4">
-          <h2 className="text-base sm:text-lg font-black text-[#1E293B] dark:text-slate-100 flex items-center gap-1.5 sm:gap-2 font-display">
-            <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 dark:text-sky-400" />
-            ระบุข้อมูลเพื่อแสกน
-          </h2>
-          {allRecords.length > 0 && (
-            <span className="text-[9px] sm:text-[10px] bg-slate-100 dark:bg-slate-700 text-indigo-700 dark:text-sky-300 border-2 border-[#1E293B] dark:border-sky-400 px-2 py-0.5 rounded-full font-black">
-              DB: {allRecords.length} รายการ
+      {/* SYNC & NETWORK STATUS BAR */}
+      <section className="w-full max-w-lg mb-2">
+        <div className="bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 flex items-center justify-between text-[10px] font-bold text-slate-400">
+          <div className="flex items-center gap-1.5 truncate">
+            <span className={`w-2 h-2 rounded-full ${syncStatus === 'live' ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`}></span>
+            <span className="text-slate-300">ซิงก์ล่าสุด: {lastSyncFullDate || lastUpdated || 'ยังไม่อัปเดต'}</span>
+          </div>
+          {isOffline ? (
+            <span className="text-amber-400 flex items-center gap-1 shrink-0 font-black">
+              <WifiOff className="w-3 h-3" /> Offline
+            </span>
+          ) : (
+            <span className="text-emerald-400 flex items-center gap-1 shrink-0 font-black">
+              <CheckCircle2 className="w-3 h-3" /> Online
             </span>
           )}
         </div>
+      </section>
 
-        <form onSubmit={handleSearch} className="space-y-2.5 sm:space-y-3.5">
-          {/* 1. PEA Meter Bar */}
-          <div>
-            <label className="block text-[11px] sm:text-xs font-black text-[#1E293B] dark:text-slate-200 mb-0.5 sm:mb-1 flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-yellow-500 fill-current shrink-0" />
-              <span>1. PEA Meter (เลขมิเตอร์)</span>
-            </label>
-            <div className="relative">
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="เช่น 012345, PEA 987..."
-                value={searchMeter}
-                onChange={(e) => setSearchMeter(e.target.value)}
-                className="w-full py-2 sm:py-2.5 pl-3 sm:pl-3.5 pr-8 sm:pr-10 text-slate-800 dark:text-slate-100 rounded-lg sm:rounded-xl font-sans text-xs sm:text-sm cyber-input font-bold placeholder-slate-400 dark:placeholder-slate-500"
-              />
-              {searchMeter && (
-                <button
-                  type="button"
-                  onClick={() => setSearchMeter('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-all cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </button>
-              )}
+      {/* CHAT CONTAINER - MOBILE SCALED */}
+      <main className="w-full max-w-lg flex-1 bg-slate-900/90 dark:bg-slate-950/90 border border-slate-800 dark:border-slate-800 rounded-2xl shadow-xl flex flex-col overflow-hidden mb-2 relative">
+        
+        {/* MESSAGES SCROLL AREA */}
+        <div 
+          ref={chatContainerRef}
+          className="flex-1 p-3 overflow-y-auto space-y-3.5 h-[calc(100vh-220px)] min-h-[380px] max-h-[72vh] scroll-smooth"
+        >
+          {/* Top 3D Animated Mascot Widget */}
+          <PeaBot3DMascot isThinking={isAiThinking} />
+
+          {chatMessages.map((msg) => (
+            <div 
+              key={msg.id} 
+              className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'} animate-fadeIn`}
+            >
+              <div className={`flex items-start gap-2 max-w-[92%] ${msg.sender === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                
+                {/* Avatar */}
+                {msg.sender === 'user' ? (
+                  <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border bg-indigo-600 border-indigo-400 text-white">
+                    <User className="w-3.5 h-3.5" />
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 rounded-xl overflow-hidden shrink-0 border-2 border-sky-400 shadow-md bg-slate-950 transform hover:scale-105 transition-transform">
+                    <img src={peaBotMascotImg} alt="3D Mascot" className="w-full h-full object-cover" />
+                  </div>
+                )}
+
+                {/* Bubble */}
+                <div className={`p-2.5 sm:p-3 rounded-2xl text-xs sm:text-sm font-medium leading-relaxed ${
+                  msg.sender === 'user'
+                    ? 'bg-indigo-600 text-white border border-indigo-500 rounded-tr-none shadow-sm'
+                    : 'bg-slate-800/90 text-slate-100 border border-slate-700/80 rounded-tl-none shadow-sm'
+                }`}>
+                  
+                  <div className="whitespace-pre-line break-words">
+                    {msg.text}
+                  </div>
+
+                  {msg.extractedSummary && (
+                    <div className="mt-2 pt-1.5 border-t border-slate-700/60 flex items-center gap-1 text-[11px] font-black text-sky-300">
+                      <Sparkles className="w-3 h-3 text-yellow-400 shrink-0" />
+                      <span>{msg.extractedSummary}</span>
+                    </div>
+                  )}
+
+                  {/* EMBEDDED MOBILE RESULT CARDS */}
+                  {msg.results && msg.results.length > 0 && (
+                    <div className="mt-2.5 pt-2 border-t border-slate-700 space-y-2">
+                      <div className="text-[10px] font-black text-amber-300 uppercase tracking-wider">
+                        📍 รายการพิกัด ({msg.results.length} รายการ)
+                      </div>
+
+                      <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+                        {msg.results.map((item, idx) => {
+                          const { compactFields, lat, lon } = item;
+                          const cardKey = `${msg.id}-${idx}`;
+
+                          return (
+                            <div 
+                              key={idx}
+                              className="bg-slate-900 border border-slate-700/90 rounded-xl p-2.5 text-slate-100 shadow-md text-xs space-y-1.5"
+                            >
+                              {/* Row 1: Full Name only (Blue Text) */}
+                              <h4 className="font-black text-sky-300 leading-snug font-display break-words text-xs sm:text-sm">
+                                {compactFields.fullName}
+                              </h4>
+
+                              {/* Row 2: Address with Match Score Badge behind Province */}
+                              <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-slate-300 leading-tight pt-0.5">
+                                {compactFields.address && (
+                                  <div className="flex items-start gap-1 flex-1 min-w-[160px]">
+                                    <Home className="w-3 h-3 text-cyan-400 shrink-0 mt-0.5" />
+                                    <span className="break-words">{compactFields.address}</span>
+                                  </div>
+                                )}
+
+                                <div className="flex items-center gap-1 shrink-0 ml-auto">
+                                  {item.matchScore !== undefined && (
+                                    <span className={`text-[8px] font-bold px-1.5 py-0.2 rounded border ${
+                                      item.matchScore === 100
+                                        ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700/80'
+                                        : item.matchScore >= 85
+                                        ? 'bg-sky-950/90 text-sky-300 border-sky-700/80'
+                                        : 'bg-amber-950/90 text-amber-300 border-amber-700/80'
+                                    }`}>
+                                      {item.matchScore === 100 ? '🎯 ตรงกัน 100%' : `⚡ ตรงกัน ${item.matchScore}%`}
+                                    </span>
+                                  )}
+                                  {lat && lon && (
+                                    <span className="text-[8px] bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold px-1.5 py-0.2 rounded shrink-0">
+                                      พิกัดพร้อม
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-1 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-[10px]">
+                                {compactFields.ca && (
+                                  <div>
+                                    <span className="text-slate-500 block text-[8px] uppercase">CA</span>
+                                    <span className="text-pink-300 font-mono font-bold">{compactFields.ca}</span>
+                                  </div>
+                                )}
+                                {compactFields.meter && (
+                                  <div>
+                                    <span className="text-slate-500 block text-[8px] uppercase">Meter</span>
+                                    <span className="text-yellow-300 font-mono font-bold">{compactFields.meter}</span>
+                                  </div>
+                                )}
+                                {compactFields.phone && (
+                                  <div>
+                                    <span className="text-slate-500 block text-[8px] uppercase">โทร</span>
+                                    <span className="text-green-300 font-mono font-bold">{compactFields.phone}</span>
+                                  </div>
+                                )}
+                                {compactFields.route && (
+                                  <div>
+                                    <span className="text-slate-500 block text-[8px] uppercase">สายป้อน</span>
+                                    <span className="text-sky-300 font-mono font-bold">{compactFields.route}</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {lat && lon ? (
+                                <div className="flex items-center gap-1 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => openGoogleMaps(lat, lon)}
+                                    className="flex-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
+                                  >
+                                    <Map className="w-3 h-3" />
+                                    <span>นำทาง</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => copyCoordinates(lat, lon, cardKey)}
+                                    className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
+                                  >
+                                    <Copy className="w-3 h-3" />
+                                    <span>{copiedIndex === cardKey ? 'ก๊อปแล้ว!' : 'คัดลอก'}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => shareCoordinates(compactFields, lat, lon)}
+                                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold p-1.5 rounded-lg text-[10px] cursor-pointer active:scale-95 transition-all"
+                                  >
+                                    <Share2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <p className="text-[10px] text-amber-400 italic">⚠️ ไม่พบพิกัด ละติจูด/ลองจิจูด ในรายการนี้</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
+          ))}
 
-          {/* 2. CA Bar */}
-          <div>
-            <label className="block text-[11px] sm:text-xs font-black text-[#1E293B] dark:text-slate-200 mb-0.5 sm:mb-1 flex items-center gap-1.5">
-              <Hash className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-pink-500 shrink-0" />
-              <span>2. CA (หมายเลขผู้ใช้ไฟฟ้า)</span>
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="เช่น 0200012345..."
-                value={searchCa}
-                onChange={(e) => setSearchCa(e.target.value)}
-                className="w-full py-2 sm:py-2.5 pl-3 sm:pl-3.5 pr-8 sm:pr-10 text-slate-800 dark:text-slate-100 rounded-lg sm:rounded-xl font-sans text-xs sm:text-sm cyber-input font-bold placeholder-slate-400 dark:placeholder-slate-500"
-              />
-              {searchCa && (
-                <button
-                  type="button"
-                  onClick={() => setSearchCa('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-all cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </button>
-              )}
+          {/* AI Thinking Indicator */}
+          {isAiThinking && (
+            <div className="flex items-center gap-2.5 text-xs font-bold text-amber-300 animate-pulse p-2 bg-slate-900/90 rounded-2xl border border-amber-500/40 w-fit shadow-md">
+              <div className="w-6 h-6 rounded-lg overflow-hidden shrink-0 border border-amber-400 animate-bounce">
+                <img src={peaBotMascotImg} alt="PEA Bot 3D" className="w-full h-full object-cover" />
+              </div>
+              <span className="flex items-center gap-1">
+                <span>น้อง PEA Bot กำลังสแกนหาพิกัด...</span>
+                <span className="text-yellow-400 animate-spin">⚡</span>
+              </span>
             </div>
-          </div>
-
-          {/* 3. Name / House No. / Moo Bar */}
-          <div>
-            <label className="block text-[11px] sm:text-xs font-black text-[#1E293B] dark:text-slate-200 mb-0.5 sm:mb-1 flex items-center gap-1.5">
-              <Home className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-500 shrink-0" />
-              <span>3. ชื่อ นามสกุล / บ้านเลขที่ หมู่</span>
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="เช่น สมชาย, 81 ม.5, หมู่ 5..."
-                value={searchAddressName}
-                onChange={(e) => setSearchAddressName(e.target.value)}
-                className="w-full py-2 sm:py-2.5 pl-3 sm:pl-3.5 pr-8 sm:pr-10 text-slate-800 dark:text-slate-100 rounded-lg sm:rounded-xl font-sans text-xs sm:text-sm cyber-input font-bold placeholder-slate-400 dark:placeholder-slate-500"
-              />
-              {searchAddressName && (
-                <button
-                  type="button"
-                  onClick={() => setSearchAddressName('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-all cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex gap-2 pt-0.5">
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 cyber-btn bg-[#0EA5E9] hover:bg-sky-400 disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:text-slate-400 disabled:border-slate-300 text-white font-black py-2.5 sm:py-3 px-2.5 sm:px-3 rounded-lg sm:rounded-xl text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 text-center cursor-pointer select-none"
-            >
-              {loading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5 animate-cyber-spin text-[#FDE047]" />
-                  <span>กำลังสแกน...</span>
-                </>
-              ) : (
-                <>
-                  <Search className="w-4 h-4 sm:w-5 sm:h-5" />
-                  <span>ค้นหาข้อมูลพิกัด (สแกน)</span>
-                </>
-              )}
-            </button>
-
-            {(searchMeter || searchCa || searchAddressName) && (
-              <button
-                type="button"
-                onClick={handleClearAll}
-                title="ล้างข้อมูลค้นหาทุกช่อง"
-                className="cyber-btn bg-slate-100 dark:bg-slate-800 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-slate-700 dark:text-slate-200 hover:text-rose-700 dark:hover:text-rose-300 px-3 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1 cursor-pointer transition-colors"
-              >
-                <X className="w-4 h-4 sm:w-5 sm:h-5" />
-                <span className="hidden sm:inline">ล้าง</span>
-              </button>
-            )}
-
-            {/* Quick reload button */}
-            <button
-              type="button"
-              disabled={loading}
-              onClick={() => {
-                setLoading(true);
-                fetchDatabase(true)
-                  .then((data) => {
-                    setError(null);
-                    setMascotText(`อัปเดตข้อมูลสำเร็จ! ตรวจพบข้อมูลล่าสุดทั้งหมด ${data.length} รายการฮะ! ⚡`);
-                  })
-                  .catch((err) => {
-                    setError('อัปเดตล้มเหลว: ' + err.message);
-                  })
-                  .finally(() => setLoading(false));
-              }}
-              title="รีเฟรชอัปเดตข้อมูล"
-              className="cyber-btn bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 rounded-lg sm:rounded-xl flex items-center justify-center cursor-pointer"
-            >
-              <RefreshCw className={`w-4 h-4 sm:w-5 sm:h-5 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        </form>
-
-        {/* Quick Search Templates */}
-        <div className="mt-3 pt-3 sm:mt-4 sm:pt-4 border-t-2 border-dashed border-slate-200 dark:border-slate-700">
-          <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest font-black mb-1.5">💡 ตัวอย่างการค้นหาด่วน:</p>
-          <div className="flex flex-wrap gap-1 sm:gap-1.5">
-            <button 
-              type="button"
-              onClick={() => handleQuickSearch('ca', '020')} 
-              className="text-[11px] sm:text-xs bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/80 text-indigo-700 dark:text-sky-300 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl border-2 border-[#1E293B] dark:border-sky-400 font-bold transition flex items-center gap-1 cursor-pointer"
-            >
-              <Hash className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-pink-500" />
-              <span>รหัส CA (020)</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleQuickSearch('address', 'สม')} 
-              className="text-[11px] sm:text-xs bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/80 text-indigo-700 dark:text-sky-300 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl border-2 border-[#1E293B] dark:border-sky-400 font-bold transition flex items-center gap-1 cursor-pointer"
-            >
-              <Home className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-cyan-600 dark:text-cyan-400" />
-              <span>ชื่อ "สม"</span>
-            </button>
-            <button 
-              type="button"
-              onClick={() => handleQuickSearch('address', '81 ม.5')} 
-              className="text-[11px] sm:text-xs bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/80 text-indigo-700 dark:text-sky-300 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl border-2 border-[#1E293B] dark:border-sky-400 font-bold transition flex items-center gap-1 cursor-pointer"
-            >
-              <Home className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-cyan-600 dark:text-cyan-400" />
-              <span>บ้านเลขที่ (81 ม.5)</span>
-            </button>
-          </div>
+          )}
         </div>
 
-        {/* Recent Searches Section */}
-        {recentSearches.length > 0 && (
-          <div className="mt-3 pt-3 sm:mt-4 sm:pt-4 border-t-2 border-dashed border-slate-200 dark:border-slate-700">
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest font-black flex items-center gap-1">
-                <History className="w-3.5 h-3.5 text-indigo-600 dark:text-sky-400" />
-                <span>ประวัติการค้นหาล่าสุด ({recentSearches.length}):</span>
-              </p>
+        {/* SEARCH HISTORY BAR */}
+        {searchHistory.length > 0 && (
+          <div className="bg-slate-900/95 border-t border-slate-800 px-2.5 py-1.5 text-xs">
+            <div className="flex items-center justify-between gap-1 mb-1">
+              <div className="flex items-center gap-1.5 text-slate-400 font-bold text-[10px] sm:text-[11px]">
+                <History className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-sky-400" />
+                <span>ประวัติการค้นหาล่าสุด</span>
+              </div>
               <button
                 type="button"
-                onClick={clearRecentSearches}
-                className="text-[10px] text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
-                title="ล้างประวัติการค้นหาทั้งหมด"
+                onClick={clearSearchHistory}
+                className="text-[10px] text-slate-500 hover:text-rose-400 flex items-center gap-1 transition-colors px-1 py-0.5 cursor-pointer"
               >
                 <Trash2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                 <span>ล้างประวัติ</span>
               </button>
             </div>
-            <div className="flex flex-wrap gap-1.5 sm:gap-2">
-              {recentSearches.map((item) => {
-                const parts = [];
-                if (item.meter) parts.push(`Meter: ${item.meter}`);
-                if (item.ca) parts.push(`CA: ${item.ca}`);
-                if (item.address) parts.push(item.address);
-                const label = parts.join(' | ');
-
-                return (
-                  <div
-                    key={item.id}
-                    onClick={() => handleSelectRecentSearch(item)}
-                    className="group text-[11px] sm:text-xs bg-slate-100 dark:bg-slate-800 hover:bg-sky-100 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl border-2 border-[#1E293B] dark:border-sky-400 font-bold transition flex items-center gap-1.5 cursor-pointer shadow-[1.5px_1.5px_0px_#1E293B] dark:shadow-[1.5px_1.5px_0px_#0284C7] active:translate-x-0.5 active:translate-y-0.5"
-                  >
-                    <Clock className="w-3 h-3 text-indigo-500 dark:text-sky-400 shrink-0" />
-                    <span className="truncate max-w-[180px] sm:max-w-[260px]">{label}</span>
-                    <button
-                      type="button"
-                      onClick={(e) => removeRecentSearch(item.id, e)}
-                      className="p-0.5 hover:bg-rose-200 dark:hover:bg-rose-900/80 rounded text-slate-400 hover:text-rose-700 dark:hover:text-rose-200 transition shrink-0 ml-0.5"
-                      title="ลบรายการนี้"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Google Sheets Sync Status & Force Sync Control Panel */}
-        <div className="mt-3.5 pt-3 sm:mt-4 sm:pt-4 border-t-2 border-dashed border-slate-200 dark:border-slate-700">
-          <div className="bg-slate-50/80 dark:bg-slate-900/90 rounded-xl sm:rounded-2xl p-2.5 sm:p-3.5 border-2 border-[#1E293B] dark:border-sky-400 shadow-[2px_2px_0px_#1E293B] dark:shadow-[2px_2px_0px_#0284C7] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-start sm:items-center gap-2.5">
-              <div className={`p-2 rounded-xl border-2 border-[#1E293B] dark:border-sky-400 shrink-0 ${
-                syncStatus === 'live'
-                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-300'
-                  : syncStatus === 'cached'
-                  ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/90 dark:text-amber-300'
-                  : 'bg-rose-100 text-rose-900 dark:bg-rose-950/90 dark:text-rose-300'
-              }`}>
-                {syncStatus === 'live' ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                ) : syncStatus === 'cached' ? (
-                  <Database className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-                ) : (
-                  <WifiOff className="w-5 h-5 text-rose-600 dark:text-rose-400" />
-                )}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs sm:text-sm font-black text-[#1E293B] dark:text-slate-100 font-display">
-                    สถานะซิงก์ข้อมูล Google Sheets
-                  </span>
-                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border-2 border-[#1E293B] dark:border-sky-400 ${
-                    syncStatus === 'live'
-                      ? 'bg-emerald-400 text-slate-950'
-                      : syncStatus === 'cached'
-                      ? 'bg-amber-300 text-slate-950'
-                      : 'bg-rose-400 text-slate-950'
-                  }`}>
-                    {syncStatus === 'live'
-                      ? '🟢 Live Online'
-                      : syncStatus === 'cached'
-                      ? '🟡 Offline Cache'
-                      : '🔴 Disconnected'}
-                  </span>
-                </div>
-                <p className="text-[11px] sm:text-xs font-bold text-slate-600 dark:text-slate-300 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span>ซิงก์ล่าสุด: <strong className="text-indigo-600 dark:text-sky-300">{lastSyncFullDate || (lastUpdated ? `เวลา ${lastUpdated} น.` : 'ยังไม่เคยซิงก์')}</strong></span>
-                  <span className="hidden sm:inline text-slate-300 dark:text-slate-600">•</span>
-                  <span>บันทึกในระบบ: <strong className="text-indigo-600 dark:text-sky-300">{allRecords.length.toLocaleString()} รายการ</strong></span>
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              disabled={loading || isSyncing}
-              onClick={handleForceSync}
-              className="cyber-btn bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-200 dark:disabled:bg-slate-800 disabled:text-slate-400 text-white font-black px-3.5 py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer select-none transition-all shadow-[1.5px_1.5px_0px_#1E293B] dark:shadow-[1.5px_1.5px_0px_#0284C7] active:translate-x-0.5 active:translate-y-0.5"
-              title="บังคับดาวน์โหลดข้อมูลล่าสุดสดๆ จาก Google Sheets โดยไม่ผ่านแคชในเครื่อง"
-            >
-              <CloudDownload className={`w-4 h-4 ${isSyncing ? 'animate-bounce text-yellow-300' : ''}`} />
-              <span>{isSyncing ? 'กำลังบังคับซิงก์...' : 'บังคับซิงก์ใหม่ (Force Sync)'}</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* ERROR Banner */}
-      {error && (
-        <div className="w-full max-w-md md:max-w-2xl lg:max-w-3xl bg-rose-50 dark:bg-rose-950/80 border-3 sm:border-4 border-[#1E293B] dark:border-rose-400 rounded-xl sm:rounded-2xl p-3 sm:p-4 mb-4 sm:mb-6 shadow-[3px_3px_0px_#E11D48] flex items-start gap-2.5 sm:gap-3.5 text-rose-950 dark:text-rose-100 animate-fadeIn">
-          <AlertCircle className="w-5 h-5 sm:w-6 sm:h-6 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
-          <div>
-            <h3 className="text-xs sm:text-sm font-black text-rose-800 dark:text-rose-200 font-display">ขออภัยฮะ!</h3>
-            <p className="text-xs font-bold leading-snug mt-0.5">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {/* RESULTS DISPLAY PANEL */}
-      <main className="w-full max-w-md md:max-w-3xl lg:max-w-6xl space-y-3 sm:space-y-4">
-        {searchResults && searchResults.length > 0 && (
-          <div className="flex items-center justify-between px-1 sm:px-2 mb-1 sm:mb-2">
-            <span className="text-[11px] sm:text-xs text-indigo-700 dark:text-sky-400 font-black uppercase tracking-wider">
-              🟢 ผลการสแกนพิกัด ({searchResults.length} รายการ)
-            </span>
-            <button 
-              onClick={() => setSearchResults(null)}
-              className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100 underline font-bold cursor-pointer"
-            >
-              ล้างผลลัพธ์
-            </button>
-          </div>
-        )}
-
-        {searchResults && searchResults.length > 0 && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-5">
-              {searchResults.slice(0, displayLimit).map((item, index) => {
-                const { compactFields, lat, lon } = item;
-
-                return (
-                  <article 
-                    key={index} 
-                    className="cyber-card p-3.5 sm:p-4.5 relative overflow-hidden flex flex-col justify-between animate-fadeIn"
-                  >
-                    {/* Highlight match banner */}
-                    <div className="absolute top-0 right-0 bg-[#FDE047] text-[#1E293B] text-[9px] sm:text-[10px] font-black px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-bl-xl border-l-3 sm:border-l-4 border-b-3 sm:border-b-4 border-[#1E293B] dark:border-sky-400">
-                      {lat && lon ? '📍 พร้อมสแกน' : '❌ ไม่มีพิกัด'}
-                    </div>
-
-                    {/* Compact Header */}
-                    <div className="mb-2.5 sm:mb-3.5 pr-14 sm:pr-16 flex items-start gap-2 sm:gap-2.5">
-                      <div className="mt-0.5 p-1 sm:p-1.5 rounded-lg sm:rounded-xl bg-slate-100 dark:bg-slate-700 border-2 border-[#1E293B] dark:border-sky-400 shrink-0">
-                        <User className="w-4.5 h-4.5 sm:w-5.5 sm:h-5.5 text-indigo-600 dark:text-sky-300" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[9px] sm:text-[10px] text-indigo-600 dark:text-sky-400 font-black tracking-widest uppercase mb-0.5">ผู้ใช้ไฟ PEA</p>
-                        <h3 className="text-base sm:text-lg font-black text-slate-800 dark:text-slate-100 leading-tight font-display break-words">
-                          {compactFields.fullName}
-                        </h3>
-                        {compactFields.address && (
-                          <p className="text-xs sm:text-sm font-bold text-slate-600 dark:text-slate-300 mt-1 flex items-start gap-1 leading-snug break-words">
-                            <Home className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-600 dark:text-cyan-400 shrink-0 mt-0.5" />
-                            <span>{compactFields.address}</span>
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Core Metadata Row */}
-                    <div className="grid grid-cols-2 gap-2 sm:gap-2.5 bg-slate-50 dark:bg-slate-900/80 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg sm:rounded-xl p-2.5 sm:p-3 mb-2.5 sm:mb-3.5 text-xs sm:text-sm font-bold">
-                      {compactFields.ca && (
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <Hash className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-pink-500 shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-400 block leading-none uppercase mb-0.5">CA</span>
-                            <span className="text-slate-800 dark:text-slate-100 font-black block truncate text-xs sm:text-sm">{compactFields.ca}</span>
-                          </div>
-                        </div>
-                      )}
-                      {compactFields.meter && (
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <Zap className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-yellow-500 shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-400 block leading-none uppercase mb-0.5">Meter</span>
-                            <span className="text-slate-800 dark:text-slate-100 font-black block truncate text-xs sm:text-sm">{compactFields.meter}</span>
-                          </div>
-                        </div>
-                      )}
-                      {compactFields.phone && (
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <Phone className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-green-500 shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-400 block leading-none uppercase mb-0.5">เบอร์โทร</span>
-                            <span className="text-slate-800 dark:text-slate-100 font-black block truncate text-xs sm:text-sm">{compactFields.phone}</span>
-                          </div>
-                        </div>
-                      )}
-                      {compactFields.route && (
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <Compass className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-blue-500 shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[9px] sm:text-[10px] text-slate-400 dark:text-slate-400 block leading-none uppercase mb-0.5">สายป้อน</span>
-                            <span className="text-slate-800 dark:text-slate-100 font-black block truncate text-xs sm:text-sm">{compactFields.route}</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Inline coordinates */}
-                    {lat && lon && (
-                      <div className="flex items-center justify-between gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-indigo-50/80 dark:bg-slate-900/90 rounded-lg sm:rounded-xl border border-indigo-200 dark:border-sky-800 text-[11px] sm:text-xs font-bold text-indigo-700 dark:text-sky-300 mb-2.5 sm:mb-3.5">
-                        <div className="flex items-center gap-1 min-w-0">
-                          <MapPin className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-500 shrink-0" />
-                          <span className="truncate">พิกัด: {lat}, {lon}</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => copyCoordinates(lat, lon, index)}
-                          className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-black flex items-center gap-1 border-2 border-[#1E293B] dark:border-sky-400 shadow-[1.5px_1.5px_0px_#1E293B] dark:shadow-[1.5px_1.5px_0px_#0284C7] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer shrink-0 ${
-                            copiedIndex === index
-                              ? 'bg-emerald-400 text-[#1E293B]'
-                              : 'bg-white dark:bg-slate-800 dark:hover:bg-sky-600 text-[#1E293B] dark:text-slate-100'
-                          }`}
-                        >
-                          {copiedIndex === index ? (
-                            <>
-                              <Check className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#1E293B]" />
-                              <span>คัดลอกแล้ว!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#1E293B] dark:text-slate-100" />
-                              <span>คัดลอก</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Dynamic Extra Fields */}
-                    {compactFields.otherFields.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mb-2.5 sm:mb-3.5">
-                        {compactFields.otherFields.map((f, i) => (
-                          <span key={i} className="text-[9px] sm:text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-md font-bold">
-                            {f.key}: {f.val}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Action Buttons */}
-                    {lat && lon ? (
-                      <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openGoogleMaps(lat, lon)}
-                          className="cyber-btn bg-[#0EA5E9] hover:bg-sky-400 text-white font-black py-2 sm:py-2.5 px-1 sm:px-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs flex items-center justify-center gap-1 text-center cursor-pointer select-none transition-transform"
-                          title="นำทางไปยังตำแหน่งด้วย Google Maps"
-                        >
-                          <Map className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-                          <span>นำทาง</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => copyCoordinates(lat, lon, index)}
-                          className={`cyber-btn py-2 sm:py-2.5 px-1 sm:px-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black flex items-center justify-center gap-1 cursor-pointer select-none transition-all ${
-                            copiedIndex === index
-                              ? 'bg-emerald-400 text-[#1E293B]'
-                              : 'bg-[#FDE047] hover:bg-yellow-300 text-[#1E293B]'
-                          }`}
-                          title="คัดลอกค่าละติจูดและลองจิจูด"
-                        >
-                          {copiedIndex === index ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                              <span>คัดลอกแล้ว</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                              <span>คัดลอกพิกัด</span>
-                            </>
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => shareCoordinates(compactFields, lat, lon)}
-                          className="cyber-btn bg-indigo-600 hover:bg-indigo-500 text-white font-black py-2 sm:py-2.5 px-1 sm:px-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs flex items-center justify-center gap-1 text-center cursor-pointer select-none transition-transform"
-                          title="ส่งต่อพิกัดไปยังแอปอื่น (LINE, Messenger ฯลฯ)"
-                        >
-                          <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-                          <span>แชร์พิกัด</span>
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="p-2.5 sm:p-3.5 bg-rose-50 dark:bg-rose-950/60 border-3 border-dashed border-rose-200 dark:border-rose-800 rounded-lg sm:rounded-xl flex items-center gap-2 text-rose-600 dark:text-rose-300 text-xs sm:text-sm font-bold">
-                        <AlertCircle className="w-4 h-4 sm:w-5.5 sm:h-5.5 shrink-0" />
-                        <span>ไม่พบข้อมูลพิกัดละติจูด/ลองจิจูดในผู้ใช้งานไฟรายนี้</span>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-
-            {/* Pagination / Load More Button */}
-            {searchResults.length > displayLimit && (
-              <div className="flex justify-center pt-4 pb-2">
-                <button
-                  type="button"
-                  onClick={() => setDisplayLimit((prev) => prev + 24)}
-                  className="cyber-btn bg-indigo-600 hover:bg-indigo-700 text-white font-black py-2.5 px-6 rounded-xl sm:rounded-2xl text-xs sm:text-sm flex items-center gap-2 shadow-[3px_3px_0px_#1E293B] cursor-pointer"
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              {searchHistory.map((queryItem, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => handleSendChatMessage(undefined, queryItem)}
+                  className="shrink-0 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-700/80 hover:border-sky-400/60 rounded-full px-2.5 py-0.5 flex items-center gap-1.5 cursor-pointer text-[10px] sm:text-[11px] font-medium transition-all group active:scale-95 shadow-sm"
                 >
-                  <ChevronDown className="w-4 h-4" />
-                  <span>แสดงผลลัพธ์เพิ่มเติม (เหลืออีก {searchResults.length - displayLimit} รายการ)</span>
-                </button>
-              </div>
-            )}
-          </>
+                  <Search className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-sky-400/70 group-hover:text-sky-300 shrink-0" />
+                  <span className="max-w-[110px] sm:max-w-[140px] truncate">{queryItem}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => removeSearchHistoryItem(queryItem, e)}
+                    className="text-slate-500 hover:text-rose-400 p-0.5 rounded-full hover:bg-slate-700 transition-colors shrink-0"
+                    title="ลบรายการนี้"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
+
+        {/* STICKY BOTTOM INPUT BAR */}
+        <form 
+          onSubmit={handleSendChatMessage}
+          className="p-2 sm:p-3 bg-slate-900 border-t border-slate-800 flex items-center gap-2"
+        >
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={chatInputText}
+              onChange={(e) => setChatInputText(e.target.value)}
+              placeholder="พิมพ์ CA (ขึ้นต้น 200), Meter หรือชื่อ/บ้านเลขที่..."
+              className="w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium px-3.5 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-sky-400 transition-all shadow-inner"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={!chatInputText.trim() || isAiThinking}
+            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95"
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        </form>
+
       </main>
 
-      {/* FLOATING BACK TO TOP BUTTON */}
-      {showBackToTop && (
-        <button
-          type="button"
-          onClick={scrollToTop}
-          title="เลื่อนกลับขึ้นด้านบน"
-          aria-label="Back to top"
-          className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 p-2.5 sm:p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl sm:rounded-2xl border-3 border-[#1E293B] shadow-[3px_3px_0px_#1E293B] sm:shadow-[4px_4px_0px_#1E293B] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer flex items-center justify-center group animate-fadeIn"
-        >
-          <ArrowUp className="w-5 h-5 sm:w-6 sm:h-6 stroke-[3] group-hover:-translate-y-0.5 transition-transform text-[#FDE047]" />
-        </button>
-      )}
-
-      {/* PWA CUSTOM INSTALLATION BOTTOM DRAWER */}
-      {showInstallBanner && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#1E293B] border-t-4 border-[#FDE047] rounded-t-3xl p-6 shadow-[0_-10px_30px_rgba(0,0,0,0.3)] animate-slideUp max-w-md mx-auto">
-          <div className="w-12 h-1.5 bg-slate-700 rounded-full mx-auto mb-4"></div>
-          
-          <div className="flex items-start gap-4 mb-5">
-            <div className="w-16 h-16 rounded-2xl bg-[#0e071f] border-3 border-[#7C3AED] flex items-center justify-center overflow-hidden shrink-0 shadow-lg">
-              <img src="/icon.jpg" alt="GPS.Pea Icon" className="w-full h-full object-cover" />
-            </div>
-            
-            <div className="flex-1">
-              <h3 className="text-base font-black text-white font-display">
-                ติดตั้ง GPS.Pea.TKT บนมือถือ
-              </h3>
-              <p className="text-xs text-slate-300 leading-relaxed mt-1 font-bold">
-                เพื่อความรวดเร็วและพร้อมเข้าถึงระบบแผนที่ผู้ใช้ไฟได้ในทุกพื้นที่ แม้ไม่มีสัญญาณอินเทอร์เน็ต!
-              </p>
-            </div>
-          </div>
-
-          <div className="flex gap-3">
-            <button
-              onClick={() => setShowInstallBanner(false)}
-              className="flex-1 bg-slate-800 hover:bg-slate-700 border-2 border-slate-700 text-slate-300 font-bold py-3 px-4 rounded-xl text-xs text-center cursor-pointer"
-            >
-              ไว้ทีหลัง
-            </button>
-            <button
-              onClick={triggerPwaInstall}
-              className="flex-1 bg-[#FDE047] hover:bg-yellow-300 border-3 border-[#1E293B] text-[#1E293B] font-extrabold py-3 px-4 rounded-xl text-xs text-center flex items-center justify-center gap-1.5 cursor-pointer shadow-[3px_3px_0px_#1E293B] active:translate-x-0.5 active:translate-y-0.5 transition-all"
-            >
-              <Download className="w-4 h-4" />
-              <span>ติดตั้งแอปบนหน้าจอ</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Info footer */}
-      <footer className="w-full max-w-md md:max-w-2xl text-center mt-12 text-xxs text-slate-500 font-mono font-bold space-y-1">
-        <p>© 2026 GPS.Pea.TKT. All rights reserved.</p>
-        <p>ขับเคลื่อนด้วยระบบคลาวด์และฐานข้อมูลสนามแบบออฟไลน์ ⚡</p>
+      {/* FOOTER */}
+      <footer className="text-[10px] font-bold text-slate-500 text-center py-1">
+        PEA Meter & GPS AI Assistant • การไฟฟ้าส่วนภูมิภาค
       </footer>
+
     </div>
   );
 }
