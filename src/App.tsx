@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Papa from 'papaparse';
+import { SplashScreen } from './components/SplashScreen';
 import { 
   User, 
   MapPin, 
@@ -152,7 +153,7 @@ const calculateThaiSimilarity = (query: string, fullName: string, normRowText: s
   if (qSkel.length >= 2 && fSkel.length >= 2) {
     if (fSkel.includes(qSkel)) {
       const ratio = qSkel.length / Math.max(qSkel.length, fSkel.length);
-      return Math.round(92 + ratio * 8); // 92% - 100%
+      return Math.round(95 + ratio * 5); // 95% - 100%
     }
   }
 
@@ -173,16 +174,18 @@ const calculateThaiSimilarity = (query: string, fullName: string, normRowText: s
       // Skip Levenshtein if length difference is too large (> 3 chars)
       if (Math.abs(qTokSkel.length - fTokSkel.length) > 3) continue;
 
-      if (fTokSkel.includes(qTokSkel) || qTokSkel.includes(fTokSkel)) {
+      if (fTokSkel === qTokSkel) {
+        if (98 > bestMatch) bestMatch = 98;
+      } else if (fTokSkel.includes(qTokSkel) || qTokSkel.includes(fTokSkel)) {
         const lenDiff = Math.abs(fTokSkel.length - qTokSkel.length);
-        const score = Math.max(88, 98 - lenDiff * 3);
+        const score = Math.max(95, 99 - lenDiff * 2);
         if (score > bestMatch) bestMatch = score;
       } else {
         const dist = getLevenshteinDistance(qTokSkel, fTokSkel);
         const maxLen = Math.max(qTokSkel.length, fTokSkel.length);
         if (maxLen > 0) {
           const sim = Math.round((1 - dist / maxLen) * 100);
-          if (sim >= 65 && sim > bestMatch) {
+          if (sim >= 95 && sim > bestMatch) {
             bestMatch = sim;
           }
         }
@@ -435,6 +438,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [copiedIndex, setCopiedIndex] = useState<string | number | null>(null);
+  const [showSplash, setShowSplash] = useState<boolean>(true);
 
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -758,7 +762,7 @@ export default function App() {
           score = calculateThaiSimilarity(raw, item.compactFields.fullName, item.rowNameAddrNorm);
         }
 
-        if (score >= 65) {
+        if (score >= 95) {
           matched.push({ ...item, matchScore: score });
         }
       }
@@ -773,8 +777,7 @@ export default function App() {
     } else if (searchMeter || detectedType === 'meter') {
       summaryLabel = `⚡ ค้นหาเลขเครื่องวัด Meter (${matched.length} รายการ)`;
     } else {
-      const highConfidence = matched.filter(m => (m.matchScore || 0) >= 85).length;
-      summaryLabel = `🔍 สแกนสระ/ชื่อใกล้เคียง (${matched.length} รายการ | แม่นยำสูง ${highConfidence} รายการ)`;
+      summaryLabel = `🔍 ผลลัพธ์ตรงกัน 95-100% (${matched.length} รายการ)`;
     }
 
     return { matched, summaryLabel, detectedType };
@@ -807,7 +810,7 @@ export default function App() {
 
       const topMatch = matchedResults[0];
       let confidenceNote = '';
-      if (topMatch && topMatch.matchScore && topMatch.matchScore < 100 && topMatch.matchScore >= 80) {
+      if (topMatch && topMatch.matchScore && topMatch.matchScore < 100 && topMatch.matchScore >= 95) {
         confidenceNote = `\n(💡 สแกนพบชื่อที่ใกล้เคียงด้วยความแม่นยำประมาณ **${topMatch.matchScore}%**)`;
       }
 
@@ -860,8 +863,16 @@ export default function App() {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const copyCoordinates = (lat: string, lon: string, indexKey: string | number) => {
-    const textToCopy = `${lat}, ${lon}`;
+  const copyCoordinates = (fields: CompactFields, lat: string | null, lon: string | null, indexKey: string | number) => {
+    const mapsUrl = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : '-';
+    const textToCopy = [
+      `ชื่อ นามสกุล: ${fields.fullName || '-'}`,
+      `ที่อยู่: ${fields.address || '-'}`,
+      `Pea meter: ${fields.meter || '-'}`,
+      `CA: ${fields.ca || '-'}`,
+      `Google map: ${mapsUrl}`
+    ].join('\n');
+
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(textToCopy).then(() => {
         setCopiedIndex(indexKey);
@@ -879,21 +890,31 @@ export default function App() {
     }
   };
 
-  const shareCoordinates = (fields: CompactFields, lat: string, lon: string) => {
-    const title = `พิกัด PEA - ${fields.fullName}`;
-    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
-    const text = `📍 พิกัด PEA: ${fields.fullName}\n🏠 ที่อยู่: ${fields.address || '-'}\n⚡ Meter: ${fields.meter || '-'}\n📌 CA: ${fields.ca || '-'}\n🗺️ พิกัด: ${lat}, ${lon}\n🔗 แผนที่: ${mapsUrl}`;
+  const shareCoordinates = (fields: CompactFields, lat: string | null, lon: string | null) => {
+    const mapsUrl = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : '-';
+    const text = [
+      `ชื่อ นามสกุล: ${fields.fullName || '-'}`,
+      `ที่อยู่: ${fields.address || '-'}`,
+      `Pea meter: ${fields.meter || '-'}`,
+      `CA: ${fields.ca || '-'}`,
+      `Google map: ${mapsUrl}`
+    ].join('\n');
 
     if (navigator.share) {
-      navigator.share({ title, text, url: mapsUrl }).catch(() => {});
+      navigator.share({
+        title: `พิกัด PEA - ${fields.fullName || 'ผู้ใช้ไฟ'}`,
+        text: text
+      }).catch(() => {});
     } else {
-      copyCoordinates(lat, lon, 'share');
+      copyCoordinates(fields, lat, lon, 'share');
       alert('คัดลอกข้อความพิกัดสำหรับแชร์แล้ว:\n\n' + text);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#0B0F19] dark:bg-[#070A12] text-slate-100 font-sans flex flex-col items-center justify-between p-2 sm:p-4 select-none transition-colors duration-300">
+    <>
+      {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
+      <div className="min-h-screen bg-[#0B0F19] dark:bg-[#070A12] text-slate-100 font-sans flex flex-col items-center justify-between p-2 sm:p-4 select-none transition-colors duration-300">
       
       {/* MOBILE-FIRST HEADER */}
       <header className="w-full max-w-lg mb-2">
@@ -939,6 +960,16 @@ export default function App() {
               title="ล้างแชท"
             >
               <Trash2 className="w-4 h-4" />
+            </button>
+
+            {/* Replay Splash Animation Button */}
+            <button
+              type="button"
+              onClick={() => setShowSplash(true)}
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-purple-300 rounded-xl border border-slate-700 transition-all cursor-pointer"
+              title="ดูอนิเมชั่นต้อนรับ (Splash Screen)"
+            >
+              <Sparkles className="w-4 h-4 text-purple-300" />
             </button>
 
             {/* Dark Mode Toggle */}
@@ -1110,7 +1141,7 @@ export default function App() {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => copyCoordinates(lat, lon, cardKey)}
+                                    onClick={() => copyCoordinates(compactFields, lat, lon, cardKey)}
                                     className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
                                   >
                                     <Copy className="w-3 h-3" />
@@ -1224,5 +1255,6 @@ export default function App() {
       </footer>
 
     </div>
+    </>
   );
 }
