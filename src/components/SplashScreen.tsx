@@ -195,7 +195,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
             <motion.h1
               initial={{ y: 15, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.3, duration: 0.5 }}
+              transition={{ delay: 1, duration: 7 }}
               className="text-2xl sm:text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-sky-300 via-purple-200 to-sky-400 font-display drop-shadow-[0_2px_10px_rgba(14,165,233,0.3)]"
             >
               PEA GPS SEARCH
@@ -204,18 +204,18 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
             <motion.p
               initial={{ y: 15, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.4, duration: 0.5 }}
+              transition={{ delay: 1, duration: 7 }}
               className="text-xs sm:text-sm text-sky-200/80 font-medium mt-1 mb-2"
             >
-              ระบบค้นหาพิกัดผู้ใช้ไฟและการไฟฟ้านครหลวง/ส่วนภูมิภาค
+              ระบบค้นหาพิกัดผู้ใช้ไฟฟ้า กฟส.ท่าคันโท
             </motion.p>
           </div>
 
           {/* Bottom Progress & Launch Area */}
           <motion.div
-            initial={{ y: 20, opacity: 0 }}
+            initial={{ y: 15, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.5, duration: 0.5 }}
+            transition={{ delay: 1, duration: 7 }}
             className="relative z-10 w-full max-w-sm flex flex-col items-center gap-3 pb-4"
           >
             {/* Progress Bar Container */}
@@ -261,9 +261,9 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
                 className="fixed inset-0 z-[10000] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4"
               >
                 <motion.div
-                  initial={{ scale: 0.9, y: 20 }}
+                  initial={{ scale: 8, y: 20 }}
                   animate={{ scale: 1, y: 0 }}
-                  exit={{ scale: 0.9, y: 20 }}
+                  exit={{ scale: 3, y: 20 }}
                   className="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 max-w-sm w-full text-center shadow-2xl relative overflow-hidden"
                 >
                   <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-sky-500 via-purple-500 to-indigo-500" />

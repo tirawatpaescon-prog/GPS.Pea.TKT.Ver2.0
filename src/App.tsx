@@ -49,6 +49,9 @@ export interface IndexedRecord {
   rowMeterLower: string;
   rowCaLower: string;
   rowNameAddrNorm: string;
+  rawSearchStr: string;
+  pureMeterDigits: string;
+  pureCaDigits: string;
   lat: string | null;
   lon: string | null;
   compactFields: CompactFields;
@@ -541,7 +544,8 @@ export default function App() {
 
         if (
           kNorm.includes('meter') || kNorm.includes('เครื่องวัด') || kNorm.includes('มิเตอร์') ||
-          kNorm.includes('amp') || kNorm.includes('แอมป์') || kNorm.includes('serial') || kNorm === 'pea meter'
+          kNorm.includes('amp') || kNorm.includes('แอมป์') || kNorm.includes('serial') || kNorm.includes('มต') ||
+          kNorm === 'pea meter' || kNorm.includes('pea')
         ) {
           rowMeterStr += ` ${v}`;
         } else if (
@@ -558,11 +562,22 @@ export default function App() {
       const coords = resolveCoordinates(row);
       const compactFields = extractCompactFields(row);
 
+      if (compactFields.meter) rowMeterStr += ` ${compactFields.meter}`;
+      if (compactFields.ca) rowCaStr += ` ${compactFields.ca}`;
+
+      const rawSearchStr = Object.values(row)
+        .map((v) => (v ? String(v).trim().toLowerCase() : ''))
+        .filter(Boolean)
+        .join(' ');
+
       return {
         record: row,
         rowMeterLower: rowMeterStr.toLowerCase(),
         rowCaLower: rowCaStr.toLowerCase(),
         rowNameAddrNorm: normalizeThaiAddress(rowNameAddrStr).toLowerCase(),
+        rawSearchStr,
+        pureMeterDigits: rowMeterStr.replace(/[^0-9a-zA-Z]/g, '').toLowerCase(),
+        pureCaDigits: rowCaStr.replace(/[^0-9a-zA-Z]/g, '').toLowerCase(),
         lat: coords.lat,
         lon: coords.lon,
         compactFields
@@ -711,60 +726,112 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Smart Filtering Engine with Thai Fuzzy Phonetic Search (85-100% Accuracy)
+  // Smart Filtering Engine with Unified Search across CA, PEA Meter, Name, Surname, House No., and Address
   const smartFilterRecords = (queryText: string, meter?: string | null, ca?: string | null, addressName?: string | null): { matched: IndexedRecord[]; summaryLabel: string; detectedType: string } => {
     const raw = queryText.trim().toLowerCase();
-    const pureDigits = raw.replace(/[^0-9]/g, '');
+    if (!raw && !meter && !ca && !addressName) {
+      return { matched: [], summaryLabel: '', detectedType: 'text' };
+    }
 
-    // Determine target filter strategy
-    let searchMeter = meter || null;
-    let searchCa = ca || null;
-    let searchAddr = addressName || null;
+    const pureDigits = raw.replace(/[^0-9a-zA-Z]/g, '');
+    const normQ = normalizeThaiAddress(raw).toLowerCase();
+    const terms = normQ.split(/\s+/).filter(Boolean);
+    const rawTerms = raw.split(/\s+/).filter(Boolean);
+
+    let searchMeter = meter ? meter.trim().toLowerCase() : null;
+    let searchCa = ca ? ca.trim().toLowerCase() : null;
     let detectedType = 'text';
 
-    if (!searchMeter && !searchCa && !searchAddr) {
-      if (pureDigits.startsWith('200') || pureDigits.length >= 10) {
-        searchCa = pureDigits;
-        detectedType = 'ca';
-      } else if (pureDigits.length >= 4 && pureDigits.length <= 9 && !/[a-zA-Zก-ฮ]/.test(raw)) {
-        searchMeter = pureDigits;
-        detectedType = 'meter';
-      } else {
-        searchAddr = raw;
-        detectedType = 'address';
-      }
+    if (searchCa) {
+      detectedType = 'ca';
+    } else if (searchMeter) {
+      detectedType = 'meter';
+    } else if (pureDigits.startsWith('200') || pureDigits.length >= 10) {
+      detectedType = 'ca';
+    } else if (pureDigits.length >= 4 && /^\d+$/.test(pureDigits) && !/[a-zA-Zก-ฮ]/.test(raw) && !raw.includes('/')) {
+      detectedType = 'meter';
+    } else if (raw.includes('/') || /\d+/.test(raw)) {
+      detectedType = 'address';
+    } else {
+      detectedType = 'name';
     }
 
     const matched: IndexedRecord[] = [];
-    const normQ = normalizeThaiAddress(searchAddr || raw).toLowerCase();
-    const terms = normQ.split(/\s+/).filter(Boolean);
 
     for (let i = 0; i < indexedRecords.length; i++) {
       const item = indexedRecords[i];
+      let score = 0;
 
+      // 1. Explicit CA argument passed
       if (searchCa) {
-        if (item.rowCaLower.includes(searchCa.toLowerCase())) {
-          matched.push({ ...item, matchScore: 100 });
+        const caDigits = searchCa.replace(/[^0-9a-zA-Z]/g, '');
+        if (
+          item.rowCaLower.includes(searchCa) ||
+          (caDigits && item.pureCaDigits.includes(caDigits)) ||
+          (item.compactFields.ca && item.compactFields.ca.toLowerCase().includes(searchCa))
+        ) {
+          score = 100;
         }
       } else if (searchMeter) {
-        if (item.rowMeterLower.includes(searchMeter.toLowerCase())) {
-          matched.push({ ...item, matchScore: 100 });
+        // 2. Explicit Meter argument passed
+        const meterDigits = searchMeter.replace(/[^0-9a-zA-Z]/g, '');
+        if (
+          item.rowMeterLower.includes(searchMeter) ||
+          (meterDigits && item.pureMeterDigits.includes(meterDigits)) ||
+          (item.compactFields.meter && item.compactFields.meter.toLowerCase().includes(searchMeter))
+        ) {
+          score = 100;
         }
       } else {
-        // Name / Address / Thai Fuzzy Search
-        let score = 0;
+        // 3. Unified All-Field Search (CA, Meter, Name, Surname, House No., Address, All CSV cells)
 
-        // Exact term match check
-        if (terms.length > 0 && terms.every((t) => item.rowNameAddrNorm.includes(t))) {
+        // A. Check PEA Meter Match
+        if (
+          pureDigits.length >= 3 &&
+          (item.rowMeterLower.includes(raw) ||
+            (pureDigits && item.pureMeterDigits.includes(pureDigits)) ||
+            (item.compactFields.meter && item.compactFields.meter.toLowerCase().includes(raw)))
+        ) {
           score = 100;
-        } else {
-          // Calculate Thai phonetic & Levenshtein similarity score for names
-          score = calculateThaiSimilarity(raw, item.compactFields.fullName, item.rowNameAddrNorm);
         }
 
-        if (score >= 95) {
-          matched.push({ ...item, matchScore: score });
+        // B. Check CA Match
+        if (
+          score < 100 &&
+          pureDigits.length >= 4 &&
+          (item.rowCaLower.includes(raw) ||
+            (pureDigits && item.pureCaDigits.includes(pureDigits)) ||
+            (item.compactFields.ca && item.compactFields.ca.toLowerCase().includes(raw)))
+        ) {
+          score = 100;
         }
+
+        // C. Check Full Substring or Terms Match across ALL row fields (House No., Address, Name, Surname, etc.)
+        if (score < 100) {
+          if (
+            item.rawSearchStr.includes(raw) ||
+            item.rowNameAddrNorm.includes(raw) ||
+            item.rowNameAddrNorm.includes(normQ)
+          ) {
+            score = 100;
+          } else if (rawTerms.length > 0 && rawTerms.every((t) => item.rawSearchStr.includes(t))) {
+            score = 100;
+          } else if (terms.length > 0 && terms.every((t) => item.rowNameAddrNorm.includes(t))) {
+            score = 100;
+          }
+        }
+
+        // D. Fallback to Thai Phonetic Fuzzy Matching for Names / Surnames
+        if (score < 100) {
+          const thaiScore = calculateThaiSimilarity(raw, item.compactFields.fullName, item.rowNameAddrNorm);
+          if (thaiScore >= 95) {
+            score = thaiScore;
+          }
+        }
+      }
+
+      if (score >= 95) {
+        matched.push({ ...item, matchScore: score });
       }
     }
 
@@ -772,10 +839,12 @@ export default function App() {
     matched.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
 
     let summaryLabel = '';
-    if (searchCa || detectedType === 'ca') {
+    if (detectedType === 'ca') {
       summaryLabel = `📌 ค้นหาเลขผู้ใช้ไฟ CA (${matched.length} รายการ)`;
-    } else if (searchMeter || detectedType === 'meter') {
-      summaryLabel = `⚡ ค้นหาเลขเครื่องวัด Meter (${matched.length} รายการ)`;
+    } else if (detectedType === 'meter') {
+      summaryLabel = `⚡ ค้นหาเลขเครื่องวัด PEA Meter (${matched.length} รายการ)`;
+    } else if (detectedType === 'address') {
+      summaryLabel = `🏠 ค้นหาบ้านเลขที่/ที่อยู่ (${matched.length} รายการ)`;
     } else {
       summaryLabel = `🔍 ผลลัพธ์ตรงกัน 95-100% (${matched.length} รายการ)`;
     }

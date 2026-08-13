@@ -1,7 +1,7 @@
 {
   "name": "GPS.Pea.TKT",
-  "short_name": "GPS.Pea",
-  "description": "ระบบค้นหาตำแหน่งเครื่องวัดและพิกัดผู้ใช้ไฟ PEA",
+  "short_name": "GPS.Pea.TKT",
+  "description": "ระบบค้นหาตำแหน่งเครื่องวัดและพิกัดผู้ใช้ไฟ กฟส.ท่าคันโท",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
