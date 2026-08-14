@@ -375,7 +375,7 @@ const extractCompactFields = (record: PeaRecord): CompactFields => {
 };
 
 // 3D Mascot Banner Component
-const PeaBot3DMascot = ({ isThinking }: { isThinking: boolean }) => {
+const PeaBot3DMascot = React.memo(({ isThinking }: { isThinking: boolean }) => {
   return (
     <div className="bg-gradient-to-r from-purple-900/60 via-slate-900 to-indigo-900/60 border border-purple-500/30 rounded-2xl p-2.5 mb-2 flex items-center gap-3 relative overflow-hidden shadow-lg backdrop-blur-sm group">
       {/* Background Animated Glow */}
@@ -410,10 +410,47 @@ const PeaBot3DMascot = ({ isThinking }: { isThinking: boolean }) => {
       </div>
     </div>
   );
-};
+});
+
+// High Performance Isolated Search Input Bar (0ms Typing Input Delay)
+const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: string) => void; isAiThinking: boolean }) => {
+  const [chatInputText, setChatInputText] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = chatInputText.trim();
+    if (!trimmed || isAiThinking) return;
+    setChatInputText('');
+    onSend(trimmed);
+  };
+
+  return (
+    <form 
+      onSubmit={handleSubmit}
+      className="p-2 sm:p-3 bg-slate-900 border-t border-slate-800 flex items-center gap-2"
+    >
+      <div className="relative flex-1">
+        <input
+          type="text"
+          value={chatInputText}
+          onChange={(e) => setChatInputText(e.target.value)}
+          placeholder="พิมพ์ CA (ขึ้นต้น 200), Meter หรือชื่อ/บ้านเลขที่..."
+          className="w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium px-3.5 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-sky-400 transition-all shadow-inner"
+        />
+      </div>
+
+      <button
+        type="submit"
+        disabled={!chatInputText.trim() || isAiThinking}
+        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95"
+      >
+        <Send className="w-4 h-4" />
+      </button>
+    </form>
+  );
+});
 
 export default function App() {
-  const [chatInputText, setChatInputText] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
   const WELCOME_MSG_TEXT = 'หวัดดีครับ! น้อง PEA Bot พร้อมลุยแล้วจ้า ⚡\n\nพิมพ์ **เลข CA** (ขึ้นต้นด้วย 200), **เลข PEA Meter**, หรือ **ชื่อ/บ้านเลขที่** ส่งมาได้เลย เดี๋ยวผมสแกนหาพิกัดให้อย่างจ๊าบเลยครับ! 😎';
 
@@ -853,29 +890,27 @@ export default function App() {
   };
 
   // Instant Chat submit handler (Non-blocking UI execution for 0ms INP)
-  const handleSendChatMessage = (e?: React.FormEvent, customQuery?: string) => {
-    if (e) e.preventDefault();
-    const textToSend = (customQuery !== undefined ? customQuery : chatInputText).trim();
-    if (!textToSend || isAiThinking) return;
+  const handleSendChatMessage = (textToSend: string) => {
+    const query = textToSend.trim();
+    if (!query || isAiThinking) return;
 
-    addToSearchHistory(textToSend);
+    addToSearchHistory(query);
 
-    // 1. Instantly append user message & clear input field (0ms frame update)
+    // 1. Instantly append user message
     const userMsgId = Date.now().toString();
     const userMsg: ChatMessage = {
       id: userMsgId,
       sender: 'user',
-      text: textToSend,
+      text: query,
       timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
     };
 
-    setChatInputText('');
     setIsAiThinking(true);
     setChatMessages((prev) => [...prev, userMsg]);
 
     // 2. Yield to browser render thread before running search logic (solves INP input blocking)
     setTimeout(() => {
-      const { matched: matchedResults, summaryLabel, detectedType } = smartFilterRecords(textToSend);
+      const { matched: matchedResults, summaryLabel, detectedType } = smartFilterRecords(query);
 
       const topMatch = matchedResults[0];
       let confidenceNote = '';
@@ -894,11 +929,11 @@ export default function App() {
         funReply = greetings[Math.floor(Math.random() * greetings.length)];
       } else {
         if (detectedType === 'ca') {
-          funReply = `อ๊ะ... น้อง PEA Bot ลองสแกนเลข CA "${textToSend}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองเช็คตัวเลขอีกทีนะฮะ! 🔍`;
+          funReply = `อ๊ะ... น้อง PEA Bot ลองสแกนเลข CA "${query}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองเช็คตัวเลขอีกทีนะฮะ! 🔍`;
         } else if (detectedType === 'meter') {
-          funReply = `อ๊ะ... ลองสแกนเลข Meter "${textToSend}" แล้ว ไม่พบพิกัดเลยครับ ลองเช็คเลขเครื่องวัดอีกครั้งนะฮะ! ⚡`;
+          funReply = `อ๊ะ... ลองสแกนเลข Meter "${query}" แล้ว ไม่พบพิกัดเลยครับ ลองเช็คเลขเครื่องวัดอีกครั้งนะฮะ! ⚡`;
         } else {
-          funReply = `น้อง PEA Bot สแกนดูแล้ว ไม่พบพิกัดที่ตรงหรือใกล้เคียงกับ "${textToSend}" ครับ ลองพิมพ์ชื่อ/ที่อยู่ใหม่ดูนะฮะ! 📌`;
+          funReply = `น้อง PEA Bot สแกนดูแล้ว ไม่พบพิกัดที่ตรงหรือใกล้เคียงกับ "${query}" ครับ ลองพิมพ์ชื่อ/ที่อยู่ใหม่ดูนะฮะ! 📌`;
         }
       }
 
@@ -1273,7 +1308,7 @@ export default function App() {
               {searchHistory.map((queryItem, idx) => (
                 <div
                   key={idx}
-                  onClick={() => handleSendChatMessage(undefined, queryItem)}
+                  onClick={() => handleSendChatMessage(queryItem)}
                   className="shrink-0 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-700/80 hover:border-sky-400/60 rounded-full px-2.5 py-0.5 flex items-center gap-1.5 cursor-pointer text-[10px] sm:text-[11px] font-medium transition-all group active:scale-95 shadow-sm"
                 >
                   <Search className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-sky-400/70 group-hover:text-sky-300 shrink-0" />
@@ -1293,28 +1328,7 @@ export default function App() {
         )}
 
         {/* STICKY BOTTOM INPUT BAR */}
-        <form 
-          onSubmit={handleSendChatMessage}
-          className="p-2 sm:p-3 bg-slate-900 border-t border-slate-800 flex items-center gap-2"
-        >
-          <div className="relative flex-1">
-            <input
-              type="text"
-              value={chatInputText}
-              onChange={(e) => setChatInputText(e.target.value)}
-              placeholder="พิมพ์ CA (ขึ้นต้น 200), Meter หรือชื่อ/บ้านเลขที่..."
-              className="w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium px-3.5 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-sky-400 transition-all shadow-inner"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={!chatInputText.trim() || isAiThinking}
-            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95"
-          >
-            <Send className="w-4 h-4" />
-          </button>
-        </form>
+        <SearchInputBar onSend={handleSendChatMessage} isAiThinking={isAiThinking} />
 
       </main>
 
