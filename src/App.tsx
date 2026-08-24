@@ -17,7 +17,12 @@ import {
   Trash2,
   Search,
   History,
-  X
+  X,
+  Mic,
+  MicOff,
+  MessageCircle,
+  Check,
+  ExternalLink
 } from 'lucide-react';
 
 import peaBotMascotImg from './assets/images/pea_bot_mascot_1786454271309.jpg';
@@ -493,7 +498,159 @@ const PeaBot3DMascot = React.memo(({ isThinking }: { isThinking: boolean }) => {
   );
 });
 
-// 4. Result Card Component (Self-contained Copy state to prevent parent re-renders)
+// Helper to generate the exact formatted text matching copy & share requirements
+export const formatPeaShareText = (fields: CompactFields, lat: string | null, lon: string | null): string => {
+  const mapsUrl = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : '-';
+  return [
+    `ชื่อ นามสกุล: ${fields.fullName || '-'}`,
+    `ที่อยู่: ${fields.address || '-'}`,
+    `Pea meter: ${fields.meter || '-'}`,
+    `CA: ${fields.ca || '-'}`,
+    `Google map: ${mapsUrl}`
+  ].join('\n');
+};
+
+// 4. Share Options Modal Component
+interface ShareModalProps {
+  item: { fields: CompactFields; lat: string | null; lon: string | null } | null;
+  onClose: () => void;
+}
+
+const ShareModal = React.memo(({ item, onClose }: ShareModalProps) => {
+  const [copied, setCopied] = useState(false);
+
+  if (!item) return null;
+
+  const { fields, lat, lon } = item;
+  const shareText = formatPeaShareText(fields, lat, lon);
+  const mapsUrl = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : null;
+
+  const handleShareLine = () => {
+    const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent(shareText)}`;
+    window.open(lineUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleNativeShare = () => {
+    if (navigator.share) {
+      navigator.share({
+        title: `พิกัด PEA - ${fields.fullName || 'ผู้ใช้ไฟ'}`,
+        text: shareText
+      }).catch(() => {});
+    } else {
+      handleCopy();
+    }
+  };
+
+  const handleCopy = () => {
+    const markDone = () => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(shareText).then(markDone).catch(() => {
+        const textArea = document.createElement('textarea');
+        textArea.value = shareText;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        markDone();
+      });
+    } else {
+      const textArea = document.createElement('textarea');
+      textArea.value = shareText;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      markDone();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-4 text-slate-100 shadow-2xl space-y-3 relative">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
+              <Share2 className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-white font-display">แชร์ข้อมูลและพิกัดผู้ใช้ไฟ</h3>
+              <p className="text-[10px] text-slate-400">เลือกช่องทางที่ต้องการส่งต่อข้อมูล</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Text Preview Box */}
+        <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-300 space-y-1 select-text">
+          <div className="text-[10px] font-bold text-amber-400 mb-1 flex items-center justify-between">
+            <span>📄 รายละเอียดที่จะถูกส่ง:</span>
+            <span className="text-[9px] text-emerald-400 font-sans font-bold">✓ ตรงกับปุ่มคัดลอก</span>
+          </div>
+          <div className="text-[11px] leading-relaxed text-slate-200 whitespace-pre-wrap">
+            {shareText}
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+          {/* Direct LINE Share Button */}
+          <button
+            type="button"
+            onClick={handleShareLine}
+            className="w-full bg-[#06C755] hover:bg-[#05b34c] text-white font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all shadow-md"
+          >
+            <MessageCircle className="w-4 h-4 fill-white" />
+            <span>แชร์เข้า LINE ทันที</span>
+          </button>
+
+          {/* Native Mobile Share */}
+          <button
+            type="button"
+            onClick={handleNativeShare}
+            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all shadow-md"
+          >
+            <Share2 className="w-4 h-4" />
+            <span>แชร์แอปอื่นๆ (Share)</span>
+          </button>
+
+          {/* Copy Button */}
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="w-full bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
+          >
+            {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            <span>{copied ? 'คัดลอกเรียบร้อยแล้ว!' : 'คัดลอกข้อความ'}</span>
+          </button>
+
+          {/* Open Google Map */}
+          {mapsUrl && (
+            <button
+              type="button"
+              onClick={() => window.open(mapsUrl, '_blank', 'noopener,noreferrer')}
+              className="w-full bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
+            >
+              <ExternalLink className="w-4 h-4" />
+              <span>เปิด Google Maps</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// 5. Result Card Component (Self-contained Copy & LINE Share state)
 interface ResultCardProps {
   item: IndexedRecord;
   onOpenMap: (lat: string, lon: string) => void;
@@ -504,25 +661,20 @@ const ResultCard = React.memo(({ item, onOpenMap, onShare }: ResultCardProps) =>
   const [copied, setCopied] = useState(false);
   const { compactFields, lat, lon, matchScore } = item;
 
-  const handleCopy = useCallback(() => {
-    const mapsUrl = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : '-';
-    const textToCopy = [
-      `ชื่อ นามสกุล: ${compactFields.fullName || '-'}`,
-      `ที่อยู่: ${compactFields.address || '-'}`,
-      `Pea meter: ${compactFields.meter || '-'}`,
-      `CA: ${compactFields.ca || '-'}`,
-      `Google map: ${mapsUrl}`
-    ].join('\n');
+  const textToCopyAndShare = useMemo(() => {
+    return formatPeaShareText(compactFields, lat, lon);
+  }, [compactFields, lat, lon]);
 
+  const handleCopy = useCallback(() => {
     const markDone = () => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     };
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(textToCopy).then(markDone).catch(() => {
+      navigator.clipboard.writeText(textToCopyAndShare).then(markDone).catch(() => {
         const textArea = document.createElement('textarea');
-        textArea.value = textToCopy;
+        textArea.value = textToCopyAndShare;
         document.body.appendChild(textArea);
         textArea.select();
         document.execCommand('copy');
@@ -531,14 +683,19 @@ const ResultCard = React.memo(({ item, onOpenMap, onShare }: ResultCardProps) =>
       });
     } else {
       const textArea = document.createElement('textarea');
-      textArea.value = textToCopy;
+      textArea.value = textToCopyAndShare;
       document.body.appendChild(textArea);
       textArea.select();
       document.execCommand('copy');
       document.body.removeChild(textArea);
       markDone();
     }
-  }, [compactFields, lat, lon]);
+  }, [textToCopyAndShare]);
+
+  const handleShareLineDirect = useCallback(() => {
+    const lineUrl = `https://line.me/R/msg/text/?${encodeURIComponent(textToCopyAndShare)}`;
+    window.open(lineUrl, '_blank', 'noopener,noreferrer');
+  }, [textToCopyAndShare]);
 
   return (
     <div className="bg-slate-900 border border-slate-700/90 rounded-xl p-2.5 text-slate-100 shadow-md text-xs space-y-1.5">
@@ -607,6 +764,7 @@ const ResultCard = React.memo(({ item, onOpenMap, onShare }: ResultCardProps) =>
             type="button"
             onClick={() => onOpenMap(lat, lon)}
             className="flex-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
+            title="นำทางผ่าน Google Maps"
           >
             <Map className="w-3 h-3" />
             <span>นำทาง</span>
@@ -615,14 +773,25 @@ const ResultCard = React.memo(({ item, onOpenMap, onShare }: ResultCardProps) =>
             type="button"
             onClick={handleCopy}
             className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
+            title="คัดลอกรายละเอียดและพิกัด"
           >
-            <Copy className="w-3 h-3" />
+            {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
             <span>{copied ? 'ก๊อปแล้ว!' : 'คัดลอก'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleShareLineDirect}
+            className="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all shadow-sm"
+            title="แชร์รายละเอียดเข้า LINE ทันที"
+          >
+            <MessageCircle className="w-3 h-3 fill-white" />
+            <span>LINE</span>
           </button>
           <button
             type="button"
             onClick={() => onShare(compactFields, lat, lon)}
             className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold p-1.5 rounded-lg text-[10px] cursor-pointer active:scale-95 transition-all"
+            title="ตัวเลือกการแชร์เพิ่มเติม"
           >
             <Share2 className="w-3 h-3" />
           </button>
@@ -767,41 +936,188 @@ const SearchHistorySection = React.memo(({ history, onSelectQuery, onClearHistor
   );
 });
 
-// 7. Search Input Bar
+// 7. Search Input Bar with Thai Voice Recognition (Speech-to-Text)
 const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: string) => void; isAiThinking: boolean }) => {
   const [chatInputText, setChatInputText] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+    };
+  }, []);
+
+  const handleToggleVoice = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      alert('เบราว์เซอร์นี้ยังไม่รองรับระบบสั่งการด้วยเสียงโดยตรง แนะนำให้เปิดผ่าน Google Chrome หรือแตะที่ไอคอนไมค์บนแป้นพิมพ์ของโทรศัพท์มือถือครับ');
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
+      setIsListening(false);
+      setSpeechFeedback(null);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+      recognition.lang = 'th-TH';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setSpeechFeedback('กำลังฟังเสียงพูดภาษาไทย... พูดชื่อ, บ้านเลขที่ หรือเลข CA/Meter ได้เลยครับ 🎙️');
+      };
+
+      recognition.onresult = (event: any) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const item = event.results[i];
+          if (item.isFinal) {
+            finalTranscript += item[0].transcript;
+          } else {
+            interimTranscript += item[0].transcript;
+          }
+        }
+
+        const spoken = (finalTranscript || interimTranscript).trim();
+        if (spoken) {
+          setChatInputText(spoken);
+          setSpeechFeedback(`ได้ยิน: "${spoken}"`);
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
+          setSpeechFeedback('กรุณากดอนุญาตการใช้งานไมโครโฟนในเบราว์เซอร์');
+          alert('กรุณากดอนุญาต (Allow) การใช้งานไมโครโฟนในเบราว์เซอร์เพื่อใช้เสียงพูดครับ');
+        } else if (event.error === 'no-speech') {
+          setSpeechFeedback('ไม่พบเสียงพูด ลองกดใหม่อีกครั้งครับ');
+        } else {
+          setSpeechFeedback(`เกิดข้อผิดพลาด (${event.error})`);
+        }
+        setIsListening(false);
+        setTimeout(() => setSpeechFeedback(null), 3000);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setTimeout(() => setSpeechFeedback(null), 2500);
+      };
+
+      recognition.start();
+    } catch (err: any) {
+      console.error('Error starting speech recognition:', err);
+      setIsListening(false);
+      setSpeechFeedback('ไม่สามารถเปิดใช้งานไมโครโฟนได้');
+    }
+  }, [isListening]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isListening && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+      setIsListening(false);
+    }
     const trimmed = chatInputText.trim();
     if (!trimmed || isAiThinking) return;
     setChatInputText('');
+    setSpeechFeedback(null);
     onSend(trimmed);
   };
 
   return (
-    <form 
-      onSubmit={handleSubmit}
-      className="p-2 sm:p-3 bg-slate-900 border-t border-slate-800 flex items-center gap-2"
-    >
-      <div className="relative flex-1">
-        <input
-          type="text"
-          value={chatInputText}
-          onChange={(e) => setChatInputText(e.target.value)}
-          placeholder="พิมพ์ CA (ขึ้นต้น 200), Meter หรือชื่อ/บ้านเลขที่..."
-          className="w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium px-3.5 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-sky-400 transition-all shadow-inner"
-        />
-      </div>
+    <div className="bg-slate-900 border-t border-slate-800 flex flex-col">
+      {/* Listening Status Banner */}
+      {isListening && (
+        <div className="bg-gradient-to-r from-rose-950 via-red-900 to-amber-950 px-3 py-1.5 border-b border-rose-600/40 flex items-center justify-between text-xs text-rose-200 animate-pulse">
+          <div className="flex items-center gap-2 font-medium overflow-hidden">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+            </span>
+            <span className="truncate">{speechFeedback || 'กำลังฟังเสียงพูด... พูดเลข CA, Meter หรือชื่อได้เลย'}</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleVoice}
+            className="text-[10px] bg-rose-800 hover:bg-rose-700 text-white font-bold px-2 py-0.5 rounded cursor-pointer shrink-0 ml-2 active:scale-95 transition-all"
+          >
+            หยุดฟัง
+          </button>
+        </div>
+      )}
 
-      <button
-        type="submit"
-        disabled={!chatInputText.trim() || isAiThinking}
-        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95"
+      <form 
+        onSubmit={handleSubmit}
+        className="p-2 sm:p-3 flex items-center gap-1.5 sm:gap-2"
       >
-        <Send className="w-4 h-4" />
-      </button>
-    </form>
+        <div className="relative flex-1">
+          <input
+            type="text"
+            value={chatInputText}
+            onChange={(e) => setChatInputText(e.target.value)}
+            placeholder="พิมพ์หรือกดไมค์พูด CA, Meter, ชื่อ/บ้านเลขที่..."
+            className="w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium pl-3.5 pr-8 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-sky-400 transition-all shadow-inner"
+          />
+          {chatInputText && (
+            <button
+              type="button"
+              onClick={() => setChatInputText('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-1 cursor-pointer"
+              title="ล้างข้อความ"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Microphone Button */}
+        <button
+          type="button"
+          onClick={handleToggleVoice}
+          className={`p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 border ${
+            isListening 
+              ? 'bg-rose-600 border-rose-400 text-white animate-pulse shadow-lg shadow-rose-600/50' 
+              : 'bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 border-slate-700'
+          }`}
+          title={isListening ? 'แตะเพื่อหยุดบันทึกเสียง' : 'แตะเพื่อพูดแทนการพิมพ์ (รองรับภาษาไทย)'}
+        >
+          {isListening ? <MicOff className="w-4 h-4 text-white" /> : <Mic className="w-4 h-4 text-amber-300" />}
+        </button>
+
+        {/* Send Button */}
+        <button
+          type="submit"
+          disabled={!chatInputText.trim() || isAiThinking}
+          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95"
+          title="ส่งค้นหา"
+        >
+          <Send className="w-4 h-4" />
+        </button>
+      </form>
+    </div>
   );
 });
 
@@ -1295,32 +1611,15 @@ export default function App() {
     ]);
   }, [WELCOME_MSG_TEXT]);
 
+  const [shareModalItem, setShareModalItem] = useState<{ fields: CompactFields; lat: string | null; lon: string | null } | null>(null);
+
   const handleOpenMap = useCallback((lat: string, lon: string) => {
     const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   }, []);
 
   const handleShare = useCallback((fields: CompactFields, lat: string | null, lon: string | null) => {
-    const mapsUrl = (lat && lon) ? `https://www.google.com/maps?q=${lat},${lon}` : '-';
-    const text = [
-      `ชื่อ นามสกุล: ${fields.fullName || '-'}`,
-      `ที่อยู่: ${fields.address || '-'}`,
-      `Pea meter: ${fields.meter || '-'}`,
-      `CA: ${fields.ca || '-'}`,
-      `Google map: ${mapsUrl}`
-    ].join('\n');
-
-    if (navigator.share) {
-      navigator.share({
-        title: `พิกัด PEA - ${fields.fullName || 'ผู้ใช้ไฟ'}`,
-        text: text
-      }).catch(() => {});
-    } else {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text);
-      }
-      alert('คัดลอกข้อความพิกัดสำหรับแชร์แล้ว:\n\n' + text);
-    }
+    setShareModalItem({ fields, lat, lon });
   }, []);
 
   const handleShowSplash = useCallback(() => setShowSplash(true), []);
@@ -1328,6 +1627,7 @@ export default function App() {
   return (
     <>
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
+      <ShareModal item={shareModalItem} onClose={() => setShareModalItem(null)} />
       <div className="min-h-screen bg-[#0B0F19] dark:bg-[#070A12] text-slate-100 font-sans flex flex-col items-center justify-between p-2 sm:p-4 select-none transition-colors duration-300">
       
       {/* MOBILE-FIRST HEADER */}
