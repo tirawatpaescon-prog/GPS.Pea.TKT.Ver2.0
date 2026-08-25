@@ -22,7 +22,8 @@ import {
   MicOff,
   MessageCircle,
   Check,
-  ExternalLink
+  ExternalLink,
+  Filter
 } from 'lucide-react';
 
 import peaBotMascotImg from './assets/images/pea_bot_mascot_1786454271309.jpg';
@@ -46,6 +47,8 @@ export interface IndexedRecord {
   rowMeterLower: string;
   rowCaLower: string;
   rowNameAddrNorm: string;
+  rowAddressNorm: string;
+  rowAddressSkel: string;
   rawSearchStr: string;
   pureMeterDigits: string;
   pureCaDigits: string;
@@ -68,10 +71,16 @@ export interface ChatMessage {
 
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTsS3z2NT8lcdKRYE40bo1rPVIyc7EGJ0Hz5GkpWBD8STIpNzQS13sZAXSXn-1S90TWahJWLN2C_7Uj/pub?gid=1960280238&single=true&output=csv';
 
+// Convert Thai digits (๐-๙) to Arabic digits (0-9)
+export const convertThaiDigitsToArabic = (text: string): string => {
+  if (!text) return '';
+  return text.replace(/[๐-๙]/g, (d) => String('๐๑๒๓๔๕๖๗๘๙'.indexOf(d)));
+};
+
 // Normalize Thai text for smart address matching
 const normalizeThaiAddress = (text: string): string => {
   if (!text) return '';
-  let s = text.toLowerCase();
+  let s = convertThaiDigitsToArabic(text).toLowerCase();
 
   s = s.replace(/(หมู่บ้าน|หมู่ที่|หมู่|ม\.|ม)\s*0*(\d+)/g, 'ม.$2');
   s = s.replace(/ตำบล\s*/g, 'ต.');
@@ -82,6 +91,92 @@ const normalizeThaiAddress = (text: string): string => {
 
   s = s.replace(/\s+/g, ' ').trim();
   return s;
+};
+
+// Structured House / Moo Query Parameters
+export interface HouseQueryParams {
+  rawHouseNumber?: string; // e.g. "12/3", "5", "105/2"
+  rawMooNumber?: string;   // e.g. "1", "10"
+  textTerms: string[];     // other words e.g. ["ต.ท่าทอง"]
+  hasAnyCriteria: boolean;
+}
+
+// Parse house address search query into strictly typed components
+export const parseHouseAddressQuery = (queryText: string): HouseQueryParams => {
+  let cleaned = convertThaiDigitsToArabic(queryText.trim());
+  
+  // Remove search command prefix words
+  cleaned = cleaned.replace(/^(บ้านเลขที่|เลขที่บ้าน|เลขที่|บ้าน|ที่อยู่)\s*/gi, '');
+  cleaned = normalizeThaiAddress(cleaned);
+
+  let rawMooNumber: string | undefined;
+  // Match and extract Moo: e.g. ม.1, หมู่ 1, หมู่ที่ 1, ม 1, หมู่01
+  const mooMatch = cleaned.match(/(?:ม\.|หมู่ที่|หมู่|ม)\s*0*(\d+)/i);
+  if (mooMatch) {
+    rawMooNumber = String(parseInt(mooMatch[1], 10));
+    // Remove the moo part from cleaned text to isolate house number & other terms
+    cleaned = cleaned.replace(mooMatch[0], ' ');
+  }
+
+  let rawHouseNumber: string | undefined;
+  // Match house number with optional slashes: e.g. "12/3", "12/3/1", "105", "5"
+  const houseNumMatch = cleaned.match(/(?:^|\s|[^\d\/])(\d+(?:\/\d+)+|\d+)(?:$|\s|[^\d\/])/);
+  if (houseNumMatch) {
+    rawHouseNumber = houseNumMatch[1];
+    cleaned = cleaned.replace(houseNumMatch[1], ' ');
+  }
+
+  const textTerms = cleaned
+    .split(/\s+/)
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t && t !== '/' && !/^\d+$/.test(t));
+
+  return {
+    rawHouseNumber,
+    rawMooNumber,
+    textTerms,
+    hasAnyCriteria: !!(rawHouseNumber || rawMooNumber || textTerms.length > 0)
+  };
+};
+
+// Verify 100% exact numerical match for house numbers and moo
+export const isExactHouseMatch = (item: IndexedRecord, parsed: HouseQueryParams): boolean => {
+  if (!parsed.hasAnyCriteria) return false;
+
+  const rawAddr = (item.compactFields.address || item.rowAddressNorm || item.record['ที่อยู่'] || item.rawSearchStr || '');
+  const normAddr = normalizeThaiAddress(convertThaiDigitsToArabic(rawAddr)).toLowerCase();
+
+  // 1. Strict Exact House Number Match
+  // Must NOT be preceded or followed by any digit or slash (preventing 12 matching 12/3, 5 matching 50, 12/3 matching 112/3)
+  if (parsed.rawHouseNumber) {
+    const escaped = parsed.rawHouseNumber.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const houseRegex = new RegExp(`(?<![\\d\\/])${escaped}(?![\\d\\/])`, 'i');
+    if (!houseRegex.test(normAddr)) {
+      return false;
+    }
+  }
+
+  // 2. Strict Exact Moo Number Match
+  // Must NOT match e.g. ม.10 or ม.11 when looking for ม.1
+  if (parsed.rawMooNumber) {
+    const mooNum = parsed.rawMooNumber;
+    const mooRegex = new RegExp(`(?:ม\\.|หมู่ที่|หมู่|ม)\\s*0*${mooNum}(?!\\d)`, 'i');
+    if (!mooRegex.test(normAddr)) {
+      return false;
+    }
+  }
+
+  // 3. Strict Text/Location tokens (if specified e.g. Tambon/Amphoe)
+  if (parsed.textTerms.length > 0) {
+    const fullSearchStr = (normAddr + ' ' + (item.rowNameAddrNorm || '')).toLowerCase();
+    for (const term of parsed.textTerms) {
+      if (!fullSearchStr.includes(term)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 };
 
 // Phonetic & Vowel-insensitive Thai skeleton generator
@@ -936,9 +1031,26 @@ const SearchHistorySection = React.memo(({ history, onSelectQuery, onClearHistor
   );
 });
 
-// 7. Search Input Bar with Thai Voice Recognition (Speech-to-Text)
-const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: string) => void; isAiThinking: boolean }) => {
-  const [chatInputText, setChatInputText] = useState('');
+// 7. Search Input Bar with Push UI Filter & Thai Voice Recognition
+interface SearchInputBarProps {
+  onSend: (text: string, isHouseOnly?: boolean) => void;
+  isAiThinking: boolean;
+  isHouseFilterActive: boolean;
+  onToggleHouseFilter: () => void;
+  chatInputText: string;
+  setChatInputText: React.Dispatch<React.SetStateAction<string>>;
+  inputRef: React.RefObject<HTMLInputElement>;
+}
+
+const SearchInputBar = React.memo(({
+  onSend,
+  isAiThinking,
+  isHouseFilterActive,
+  onToggleHouseFilter,
+  chatInputText,
+  setChatInputText,
+  inputRef
+}: SearchInputBarProps) => {
   const [isListening, setIsListening] = useState(false);
   const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -982,7 +1094,11 @@ const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: st
 
       recognition.onstart = () => {
         setIsListening(true);
-        setSpeechFeedback('กำลังฟังเสียงพูดภาษาไทย... พูดชื่อ, บ้านเลขที่ หรือเลข CA/Meter ได้เลยครับ 🎙️');
+        setSpeechFeedback(
+          isHouseFilterActive
+            ? 'กำลังฟังเสียง... พูดบ้านเลขที่หรือหมู่ได้เลย เช่น "12/3 หมู่ 1" 🎙️'
+            : 'กำลังฟังเสียงพูดภาษาไทย... พูดชื่อ, บ้านเลขที่ หรือเลข CA/Meter ได้เลยครับ 🎙️'
+        );
       };
 
       recognition.onresult = (event: any) => {
@@ -1000,7 +1116,11 @@ const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: st
 
         const spoken = (finalTranscript || interimTranscript).trim();
         if (spoken) {
-          setChatInputText(spoken);
+          if (isHouseFilterActive && !spoken.startsWith('บ้านเลขที่')) {
+            setChatInputText(`บ้านเลขที่ ${spoken}`);
+          } else {
+            setChatInputText(spoken);
+          }
           setSpeechFeedback(`ได้ยิน: "${spoken}"`);
         }
       };
@@ -1030,7 +1150,7 @@ const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: st
       setIsListening(false);
       setSpeechFeedback('ไม่สามารถเปิดใช้งานไมโครโฟนได้');
     }
-  }, [isListening]);
+  }, [isHouseFilterActive, isListening, setChatInputText]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1042,13 +1162,90 @@ const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: st
     }
     const trimmed = chatInputText.trim();
     if (!trimmed || isAiThinking) return;
-    setChatInputText('');
+    setChatInputText(isHouseFilterActive ? 'บ้านเลขที่ ' : '');
     setSpeechFeedback(null);
-    onSend(trimmed);
+    onSend(trimmed, isHouseFilterActive);
+  };
+
+  const handleQuickMoo = (mooText: string) => {
+    let current = chatInputText.trim();
+    if (!current.startsWith('บ้านเลขที่')) {
+      current = `บ้านเลขที่ ${current}`.trim();
+    }
+    const updated = `${current} ${mooText}`.trim();
+    setChatInputText(updated);
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
   };
 
   return (
     <div className="bg-slate-900 border-t border-slate-800 flex flex-col">
+      {/* PUSH UI FILTER BAR */}
+      <div className="px-2.5 pt-2 pb-1.5 bg-slate-950/90 border-b border-slate-800/80 flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-2">
+          {/* Main Push Button: ค้นหาจากบ้านเลขที่ / หมู่ */}
+          <button
+            type="button"
+            id="btn-filter-house-moo"
+            onClick={onToggleHouseFilter}
+            className={`flex-1 py-1.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all duration-200 shadow-sm active:scale-95 border ${
+              isHouseFilterActive
+                ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 border-amber-300 font-black ring-2 ring-amber-400/40 shadow-amber-500/20'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/80'
+            }`}
+            title={isHouseFilterActive ? 'กำลังกรอง: ค้นหาเฉพาะบ้านเลขที่/หมู่ (แตะเพื่อปิด)' : 'แตะเพื่อเปิดโหมดค้นหาเฉพาะบ้านเลขที่/หมู่'}
+          >
+            <div className={`w-4 h-4 rounded-lg flex items-center justify-center shrink-0 ${
+              isHouseFilterActive ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-amber-400'
+            }`}>
+              <Home className="w-3 h-3" />
+            </div>
+            
+            <span className="truncate">ค้นหาจากบ้านเลขที่ / หมู่</span>
+
+            <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+              isHouseFilterActive
+                ? 'bg-slate-950/80 text-amber-300 border border-amber-400/50'
+                : 'bg-slate-800 text-slate-400'
+            }`}>
+              {isHouseFilterActive ? '✓ เปิดใช้งาน' : 'แตะเปิด'}
+            </span>
+          </button>
+
+          {isHouseFilterActive && (
+            <button
+              type="button"
+              onClick={onToggleHouseFilter}
+              className="py-1.5 px-2 bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 border border-slate-700 rounded-xl text-[10px] font-bold flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+              title="ปิดโหมดกรองบ้านเลขที่"
+            >
+              <X className="w-3 h-3" />
+              <span>ปิดโหมด</span>
+            </button>
+          )}
+        </div>
+
+        {/* Quick Moo Chips when House Filter is Active */}
+        {isHouseFilterActive && (
+          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 pt-0.5 scrollbar-none animate-fadeIn">
+            <span className="text-[10px] font-bold text-amber-400 shrink-0 flex items-center gap-1 mr-0.5">
+              <Filter className="w-2.5 h-2.5" /> หมู่:
+            </span>
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((mooNum) => (
+              <button
+                key={mooNum}
+                type="button"
+                onClick={() => handleQuickMoo(`ม.${mooNum}`)}
+                className="shrink-0 bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-amber-300 border border-amber-500/30 hover:border-amber-400 px-2 py-0.5 rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer active:scale-90"
+              >
+                ม.{mooNum}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Listening Status Banner */}
       {isListening && (
         <div className="bg-gradient-to-r from-rose-950 via-red-900 to-amber-950 px-3 py-1.5 border-b border-rose-600/40 flex items-center justify-between text-xs text-rose-200 animate-pulse">
@@ -1057,7 +1254,7 @@ const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: st
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
             </span>
-            <span className="truncate">{speechFeedback || 'กำลังฟังเสียงพูด... พูดเลข CA, Meter หรือชื่อได้เลย'}</span>
+            <span className="truncate">{speechFeedback || 'กำลังฟังเสียงพูด... พูดบ้านเลขที่ หรือเลข CA/Meter ได้เลย'}</span>
           </div>
           <button
             type="button"
@@ -1069,22 +1266,40 @@ const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: st
         </div>
       )}
 
+      {/* SEARCH FORM */}
       <form 
         onSubmit={handleSubmit}
         className="p-2 sm:p-3 flex items-center gap-1.5 sm:gap-2"
       >
         <div className="relative flex-1">
+          {/* Active Mode Tag inside input */}
+          {isHouseFilterActive && (
+            <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none z-10 bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md">
+              <Home className="w-2.5 h-2.5 text-amber-400" />
+              <span>บ้านเลขที่/หมู่</span>
+            </div>
+          )}
+
           <input
+            ref={inputRef}
             type="text"
             value={chatInputText}
             onChange={(e) => setChatInputText(e.target.value)}
-            placeholder="พิมพ์หรือกดไมค์พูด CA, Meter, ชื่อ/บ้านเลขที่..."
-            className="w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium pl-3.5 pr-8 py-2.5 rounded-xl border border-slate-700 focus:outline-none focus:border-sky-400 transition-all shadow-inner"
+            placeholder={
+              isHouseFilterActive
+                ? "ระบุบ้านเลขที่ เช่น 12/3 ม.1 หรือ 45..."
+                : "พิมพ์หรือกดไมค์พูด CA, Meter, ชื่อ/บ้านเลขที่..."
+            }
+            className={`w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium py-2.5 rounded-xl border focus:outline-none transition-all shadow-inner ${
+              isHouseFilterActive
+                ? 'pl-28 pr-8 border-amber-400/60 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 text-amber-200'
+                : 'pl-3.5 pr-8 border-slate-700 focus:border-sky-400'
+            }`}
           />
           {chatInputText && (
             <button
               type="button"
-              onClick={() => setChatInputText('')}
+              onClick={() => setChatInputText(isHouseFilterActive ? 'บ้านเลขที่ ' : '')}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-1 cursor-pointer"
               title="ล้างข้อความ"
             >
@@ -1111,7 +1326,11 @@ const SearchInputBar = React.memo(({ onSend, isAiThinking }: { onSend: (text: st
         <button
           type="submit"
           disabled={!chatInputText.trim() || isAiThinking}
-          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95"
+          className={`p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 ${
+            isHouseFilterActive
+              ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md shadow-amber-500/20'
+              : 'bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white'
+          }`}
           title="ส่งค้นหา"
         >
           <Send className="w-4 h-4" />
@@ -1152,6 +1371,38 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [showSplash, setShowSplash] = useState<boolean>(true);
+
+  // House/Moo Push UI filter state
+  const [isHouseFilterActive, setIsHouseFilterActive] = useState<boolean>(false);
+  const [chatInputText, setChatInputText] = useState<string>('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const handleToggleHouseFilter = useCallback(() => {
+    setIsHouseFilterActive((prev) => {
+      const nextState = !prev;
+      if (nextState) {
+        setChatInputText((curr) => {
+          const trimmed = curr.trim();
+          if (!trimmed) return 'บ้านเลขที่ ';
+          if (!trimmed.startsWith('บ้านเลขที่')) return `บ้านเลขที่ ${trimmed}`;
+          return curr;
+        });
+        setTimeout(() => {
+          if (searchInputRef.current) {
+            searchInputRef.current.focus();
+            const len = searchInputRef.current.value.length;
+            searchInputRef.current.setSelectionRange(len, len);
+          }
+        }, 50);
+      } else {
+        setChatInputText((curr) => {
+          if (curr.trim() === 'บ้านเลขที่') return '';
+          return curr;
+        });
+      }
+      return nextState;
+    });
+  }, []);
 
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -1281,12 +1532,15 @@ export default function App() {
         .join(' ');
 
       const rowNameAddrNorm = normalizeThaiAddress(rowNameAddrStr).toLowerCase();
+      const rowAddressNorm = normalizeThaiAddress(compactFields.address || rowNameAddrStr).toLowerCase();
 
       return {
         record: row,
         rowMeterLower: rowMeterStr.toLowerCase(),
         rowCaLower: rowCaStr.toLowerCase(),
         rowNameAddrNorm,
+        rowAddressNorm,
+        rowAddressSkel: getThaiPhoneticSkeleton(rowAddressNorm),
         rawSearchStr,
         pureMeterDigits: rowMeterStr.replace(/[^0-9a-zA-Z]/g, '').toLowerCase(),
         pureCaDigits: rowCaStr.replace(/[^0-9a-zA-Z]/g, '').toLowerCase(),
@@ -1441,7 +1695,7 @@ export default function App() {
   }, []);
 
   // Smart Filtering Engine with Pre-indexed Skeletons
-  const smartFilterRecords = useCallback((queryText: string): { matched: IndexedRecord[]; summaryLabel: string; detectedType: string } => {
+  const smartFilterRecords = useCallback((queryText: string, isHouseOnlyFilter = false): { matched: IndexedRecord[]; summaryLabel: string; detectedType: string } => {
     const raw = queryText.trim().toLowerCase();
     if (!raw) {
       return { matched: [], summaryLabel: '', detectedType: 'text' };
@@ -1452,9 +1706,20 @@ export default function App() {
     const terms = normQ.split(/\s+/).filter(Boolean);
     const rawTerms = raw.split(/\s+/).filter(Boolean);
 
+    const isHouseOnlyMode =
+      isHouseOnlyFilter ||
+      raw.startsWith('บ้านเลขที่') ||
+      raw.startsWith('บ้าน') ||
+      raw.startsWith('ที่อยู่') ||
+      raw.startsWith('หมู่ที่') ||
+      raw.startsWith('หมู่') ||
+      raw.startsWith('ม.');
+
     let detectedType = 'text';
 
-    if (pureDigits.startsWith('200') || pureDigits.length >= 10) {
+    if (isHouseOnlyMode) {
+      detectedType = 'house_only';
+    } else if (pureDigits.startsWith('200') || pureDigits.length >= 10) {
       detectedType = 'ca';
     } else if (pureDigits.length >= 4 && /^\d+$/.test(pureDigits) && !/[a-zA-Zก-ฮ]/.test(raw) && !raw.includes('/')) {
       detectedType = 'meter';
@@ -1466,69 +1731,93 @@ export default function App() {
 
     const matched: IndexedRecord[] = [];
 
-    for (let i = 0; i < indexedRecords.length; i++) {
-      const item = indexedRecords[i];
-      let score = 0;
+    // Filter strictly for house number and moo if house-only mode
+    if (isHouseOnlyMode) {
+      const parsedHouse = parseHouseAddressQuery(raw);
 
-      // A. Check PEA Meter Match
-      if (
-        pureDigits.length >= 3 &&
-        (item.rowMeterLower.includes(raw) ||
-          (pureDigits && item.pureMeterDigits.includes(pureDigits)) ||
-          (item.compactFields.meter && item.compactFields.meter.toLowerCase().includes(raw)))
-      ) {
-        score = 100;
+      for (let i = 0; i < indexedRecords.length; i++) {
+        const item = indexedRecords[i];
+        if (isExactHouseMatch(item, parsedHouse)) {
+          matched.push({ ...item, matchScore: 100 });
+        }
       }
+    } else {
+      // Standard multi-field smart search
+      const parsedHouseIfAddr = (detectedType === 'address' || raw.includes('/')) ? parseHouseAddressQuery(raw) : null;
 
-      // B. Check CA Match
-      if (
-        score < 100 &&
-        pureDigits.length >= 4 &&
-        (item.rowCaLower.includes(raw) ||
-          (pureDigits && item.pureCaDigits.includes(pureDigits)) ||
-          (item.compactFields.ca && item.compactFields.ca.toLowerCase().includes(raw)))
-      ) {
-        score = 100;
-      }
+      for (let i = 0; i < indexedRecords.length; i++) {
+        const item = indexedRecords[i];
+        let score = 0;
 
-      // C. Check Full Substring or Terms Match across ALL row fields
-      if (score < 100) {
+        // A. Check PEA Meter Match
         if (
-          item.rawSearchStr.includes(raw) ||
-          item.rowNameAddrNorm.includes(raw) ||
-          item.rowNameAddrNorm.includes(normQ)
+          pureDigits.length >= 3 &&
+          (item.rowMeterLower.includes(raw) ||
+            (pureDigits && item.pureMeterDigits.includes(pureDigits)) ||
+            (item.compactFields.meter && item.compactFields.meter.toLowerCase().includes(raw)))
         ) {
           score = 100;
-        } else if (rawTerms.length > 0 && rawTerms.every((t) => item.rawSearchStr.includes(t))) {
-          score = 100;
-        } else if (terms.length > 0 && terms.every((t) => item.rowNameAddrNorm.includes(t))) {
+        }
+
+        // B. Check CA Match
+        if (
+          score < 100 &&
+          pureDigits.length >= 4 &&
+          (item.rowCaLower.includes(raw) ||
+            (pureDigits && item.pureCaDigits.includes(pureDigits)) ||
+            (item.compactFields.ca && item.compactFields.ca.toLowerCase().includes(raw)))
+        ) {
           score = 100;
         }
-      }
 
-      // D. Fallback to Thai Phonetic Fuzzy Matching with precomputed skeletons
-      if (score < 100) {
-        const thaiScore = calculateThaiSimilarity(
-          raw,
-          item.compactFields.fullName,
-          item.rowNameAddrNorm,
-          item.fullNameSkel,
-          item.rowNameAddrSkel
-        );
-        if (thaiScore >= 95) {
-          score = thaiScore;
+        // C. Check Exact House Match if address-like query
+        if (score < 100 && parsedHouseIfAddr && parsedHouseIfAddr.hasAnyCriteria) {
+          if (isExactHouseMatch(item, parsedHouseIfAddr)) {
+            score = 100;
+          }
         }
-      }
 
-      if (score >= 95) {
-        matched.push({ ...item, matchScore: score });
+        // D. Check Full Substring or Terms Match across ALL row fields
+        if (score < 100) {
+          if (
+            item.rawSearchStr.includes(raw) ||
+            item.rowNameAddrNorm.includes(raw) ||
+            item.rowNameAddrNorm.includes(normQ)
+          ) {
+            score = 100;
+          } else if (rawTerms.length > 0 && rawTerms.every((t) => item.rawSearchStr.includes(t))) {
+            score = 100;
+          } else if (terms.length > 0 && terms.every((t) => item.rowNameAddrNorm.includes(t))) {
+            score = 100;
+          }
+        }
+
+        // E. Fallback to Thai Phonetic Fuzzy Matching with precomputed skeletons
+        if (score < 100) {
+          const thaiScore = calculateThaiSimilarity(
+            raw,
+            item.compactFields.fullName,
+            item.rowNameAddrNorm,
+            item.fullNameSkel,
+            item.rowNameAddrSkel
+          );
+          if (thaiScore >= 95) {
+            score = thaiScore;
+          }
+        }
+
+        if (score >= 95) {
+          matched.push({ ...item, matchScore: score });
+        }
       }
     }
 
     matched.sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
 
     let summaryLabel = '';
-    if (detectedType === 'ca') {
+    if (detectedType === 'house_only') {
+      summaryLabel = `🏠 ค้นหาเฉพาะบ้านเลขที่ / หมู่ (${matched.length} รายการ)`;
+    } else if (detectedType === 'ca') {
       summaryLabel = `📌 ค้นหาเลขผู้ใช้ไฟ CA (${matched.length} รายการ)`;
     } else if (detectedType === 'meter') {
       summaryLabel = `⚡ ค้นหาเลขเครื่องวัด PEA Meter (${matched.length} รายการ)`;
@@ -1542,7 +1831,7 @@ export default function App() {
   }, [indexedRecords]);
 
   // Instant Chat submit handler
-  const handleSendChatMessage = useCallback((textToSend: string) => {
+  const handleSendChatMessage = useCallback((textToSend: string, isHouseOnlyFilter = isHouseFilterActive) => {
     const query = textToSend.trim();
     if (!query || isAiThinking) return;
 
@@ -1560,24 +1849,30 @@ export default function App() {
     setChatMessages((prev) => [...prev, userMsg]);
 
     setTimeout(() => {
-      const { matched: matchedResults, summaryLabel, detectedType } = smartFilterRecords(query);
+      const { matched: matchedResults, summaryLabel, detectedType } = smartFilterRecords(query, isHouseOnlyFilter);
 
       const topMatch = matchedResults[0];
       let confidenceNote = '';
       if (topMatch && topMatch.matchScore && topMatch.matchScore < 100 && topMatch.matchScore >= 95) {
-        confidenceNote = `\n(💡 สแกนพบชื่อที่ใกล้เคียงด้วยความแม่นยำประมาณ **${topMatch.matchScore}%**)`;
+        confidenceNote = `\n(💡 สแกนพบพิกัดที่ใกล้เคียงด้วยความแม่นยำประมาณ **${topMatch.matchScore}%**)`;
       }
 
       let funReply = '';
       if (matchedResults.length > 0) {
-        const greetings = [
-          `จัดไปครับผม! น้อง PEA Bot สแกนเจอพิกัด **${matchedResults.length} รายการ** ลุยหน้างานได้เลยคร้าบ! ⚡`,
-          `เรียบร้อยแล้วจ้า! สแกนพบพิกัดผู้ใช้ไฟ **${matchedResults.length} รายการ** ดูกดนำทาง Google Maps ด้านล่างได้เลยครับ 😎`,
-          `เจอแล้วครับป๋า! น้อง PEA Bot ค้นหาพิกัดมาให้ **${matchedResults.length} รายการ** พร้อมพิกัดจีพีเอสเลยครับ! 🚀`
-        ];
-        funReply = greetings[Math.floor(Math.random() * greetings.length)];
+        if (detectedType === 'house_only') {
+          funReply = `น้อง PEA Bot สแกนค้นหาเฉพาะ **บ้านเลขที่ / หมู่** "${query}" พบพิกัดผู้ใช้ไฟ **${matchedResults.length} รายการ** ครับ! 🏠⚡`;
+        } else {
+          const greetings = [
+            `จัดไปครับผม! น้อง PEA Bot สแกนเจอพิกัด **${matchedResults.length} รายการ** ลุยหน้างานได้เลยคร้าบ! ⚡`,
+            `เรียบร้อยแล้วจ้า! สแกนพบพิกัดผู้ใช้ไฟ **${matchedResults.length} รายการ** ดูกดนำทาง Google Maps ด้านล่างได้เลยครับ 😎`,
+            `เจอแล้วครับป๋า! น้อง PEA Bot ค้นหาพิกัดมาให้ **${matchedResults.length} รายการ** พร้อมพิกัดจีพีเอสเลยครับ! 🚀`
+          ];
+          funReply = greetings[Math.floor(Math.random() * greetings.length)];
+        }
       } else {
-        if (detectedType === 'ca') {
+        if (detectedType === 'house_only') {
+          funReply = `น้อง PEA Bot สแกนค้นหาเฉพาะ **บ้านเลขที่ / หมู่** "${query}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองตรวจสอบเลขที่บ้านหรือหมู่ใหม่อีกครั้งนะฮะ 🏠🔍`;
+        } else if (detectedType === 'ca') {
           funReply = `อ๊ะ... น้อง PEA Bot ลองสแกนเลข CA "${query}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองเช็คตัวเลขอีกทีนะฮะ! 🔍`;
         } else if (detectedType === 'meter') {
           funReply = `อ๊ะ... ลองสแกนเลข Meter "${query}" แล้ว ไม่พบพิกัดเลยครับ ลองเช็คเลขเครื่องวัดอีกครั้งนะฮะ! ⚡`;
@@ -1598,7 +1893,7 @@ export default function App() {
       setChatMessages((prev) => [...prev, aiMsg]);
       setIsAiThinking(false);
     }, 16);
-  }, [addToSearchHistory, isAiThinking, smartFilterRecords]);
+  }, [addToSearchHistory, isAiThinking, isHouseFilterActive, smartFilterRecords]);
 
   const clearChatHistory = useCallback(() => {
     setChatMessages([
@@ -1692,8 +1987,16 @@ export default function App() {
           onRemoveItem={removeSearchHistoryItem}
         />
 
-        {/* STICKY BOTTOM INPUT BAR */}
-        <SearchInputBar onSend={handleSendChatMessage} isAiThinking={isAiThinking} />
+        {/* STICKY BOTTOM INPUT BAR WITH PUSH UI FILTER */}
+        <SearchInputBar
+          onSend={handleSendChatMessage}
+          isAiThinking={isAiThinking}
+          isHouseFilterActive={isHouseFilterActive}
+          onToggleHouseFilter={handleToggleHouseFilter}
+          chatInputText={chatInputText}
+          setChatInputText={setChatInputText}
+          inputRef={searchInputRef}
+        />
 
       </main>
 
