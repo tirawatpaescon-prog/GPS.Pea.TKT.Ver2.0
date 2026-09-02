@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Papa from 'papaparse';
 import { SplashScreen } from './components/SplashScreen';
+import { HomeTab } from './components/HomeTab';
+import { RecloserTab } from './components/RecloserTab';
+import { BottomNavBar } from './components/BottomNavBar';
+import { ActiveTab, RecloserLog } from './types';
 import { 
   User, 
   Home, 
@@ -23,7 +27,8 @@ import {
   MessageCircle,
   Check,
   ExternalLink,
-  Filter
+  Filter,
+  Zap
 } from 'lucide-react';
 
 import peaBotMascotImg from './assets/images/pea_bot_mascot_1786454271309.jpg';
@@ -111,7 +116,7 @@ export const parseHouseAddressQuery = (queryText: string): HouseQueryParams => {
 
   let rawMooNumber: string | undefined;
   // Match and extract Moo: e.g. ม.1, หมู่ 1, หมู่ที่ 1, ม 1, หมู่01
-  const mooMatch = cleaned.match(/(?:ม\.|หมู่ที่|หมู่|ม)\s*0*(\d+)/i);
+  const mooMatch = cleaned.match(/(?:หมู่บ้าน|หมู่ที่|หมู่|ม\.|ม)\s*0*(\d+)/i);
   if (mooMatch) {
     rawMooNumber = String(parseInt(mooMatch[1], 10));
     // Remove the moo part from cleaned text to isolate house number & other terms
@@ -449,6 +454,8 @@ const HeaderSection = React.memo(({
   loading,
   isSyncing,
   isDarkMode,
+  activeTab,
+  onTabChange,
   onForceSync,
   onClearChat,
   onShowSplash,
@@ -458,30 +465,38 @@ const HeaderSection = React.memo(({
   loading: boolean;
   isSyncing: boolean;
   isDarkMode: boolean;
+  activeTab: ActiveTab;
+  onTabChange: (tab: ActiveTab) => void;
   onForceSync: () => void;
   onClearChat: () => void;
   onShowSplash: () => void;
   onToggleTheme: () => void;
 }) => {
   return (
-    <header className="w-full max-w-lg mb-2">
-      <div className="bg-slate-900/95 dark:bg-slate-950/95 border-2 border-slate-800 dark:border-sky-500/50 rounded-2xl p-2.5 shadow-lg flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-10 h-10 rounded-xl border-2 border-sky-400 overflow-hidden shrink-0 shadow-md transform hover:rotate-6 transition-all bg-slate-950">
+    <header className="w-full max-w-md mx-auto mb-1.5 flex flex-col gap-1.5 shrink-0">
+      <div className="bg-slate-900/95 border border-slate-800 rounded-2xl sm:rounded-3xl p-2.5 sm:p-3 shadow-xl flex items-center justify-between gap-2">
+        <div 
+          onClick={() => onTabChange('home')}
+          className="flex items-center gap-2 sm:gap-2.5 min-w-0 cursor-pointer group"
+          title="แตะเพื่อกลับหน้าหลัก"
+        >
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl border-2 border-sky-400 overflow-hidden shrink-0 shadow-md bg-slate-950 transform group-hover:scale-105 transition-all">
             <img src={peaBotMascotImg} alt="PEA Bot 3D" className="w-full h-full object-cover" />
           </div>
           
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
-              <h1 className="text-sm font-black text-white tracking-tight font-display truncate">
+              <h1 className="text-sm sm:text-base font-black text-white tracking-tight font-display truncate">
                 GPS.Pea.TKT
               </h1>
               <span className="text-[9px] bg-sky-500/20 text-sky-300 border border-sky-400/30 px-1.5 py-0.2 rounded-full font-mono font-bold">
-                AI 3D Bot
+                PEA Smart
               </span>
             </div>
             <p className="text-[10px] font-bold text-slate-400 truncate">
-              สแกนพิกัดผู้ใช้ไฟ PEA {totalRecordsCount ? `(${totalRecordsCount.toLocaleString()} รายการ)` : ''}
+              {activeTab === 'home' && 'ระบบสารสนเทศภาคสนาม PEA'}
+              {activeTab === 'search' && `ค้นหาพิกัดผู้ใช้ไฟ (${totalRecordsCount ? totalRecordsCount.toLocaleString() : 0} รายการ)`}
+              {activeTab === 'recloser' && 'บันทึกจดหน่วย Recloser (7 จุดหลัก)'}
             </p>
           </div>
         </div>
@@ -491,36 +506,80 @@ const HeaderSection = React.memo(({
             type="button"
             disabled={loading || isSyncing}
             onClick={onForceSync}
-            className="p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-sky-300 rounded-xl border border-slate-700 transition-all cursor-pointer active:scale-95"
-            title="บังคับซิงก์ข้อมูลสดจาก Google Sheets"
+            className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-sky-300 rounded-xl border border-slate-700 transition-all cursor-pointer active:scale-95 shadow-sm"
+            title="ซิงก์ข้อมูลสดจากเซิร์ฟเวอร์ PEA"
           >
             <CloudDownload className={`w-4 h-4 ${isSyncing ? 'animate-bounce text-yellow-300' : ''}`} />
           </button>
-          <button
-            type="button"
-            onClick={onClearChat}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 rounded-xl border border-slate-700 transition-all cursor-pointer active:scale-95"
-            title="ล้างแชท"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          {activeTab === 'search' && (
+            <button
+              type="button"
+              onClick={onClearChat}
+              className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 rounded-xl border border-slate-700 transition-all cursor-pointer active:scale-95 shadow-sm"
+              title="ล้างประวัติการค้นหา"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onShowSplash}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-purple-300 rounded-xl border border-slate-700 transition-all cursor-pointer active:scale-95"
-            title="ดูอนิเมชั่นต้อนรับ (Splash Screen)"
+            className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-purple-300 rounded-xl border border-slate-700 transition-all cursor-pointer active:scale-95 shadow-sm"
+            title="ดูอนิเมชั่นต้อนรับ"
           >
             <Sparkles className="w-4 h-4 text-purple-300" />
           </button>
           <button
             type="button"
             onClick={onToggleTheme}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl border border-slate-700 transition-all cursor-pointer active:scale-95"
-            title="สลับธีม"
+            className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl border border-slate-700 transition-all cursor-pointer active:scale-95 shadow-sm"
+            title="สลับธีม สว่าง/มืด"
           >
             {isDarkMode ? <Sun className="w-4 h-4 text-amber-300" /> : <Moon className="w-4 h-4 text-sky-300" />}
           </button>
         </div>
+      </div>
+
+      {/* TOP TAB SWITCHER PILLS */}
+      <div className="grid grid-cols-3 gap-1 bg-slate-900/95 p-1 rounded-2xl border border-slate-800 text-xs font-bold shadow-inner">
+        <button
+          type="button"
+          onClick={() => onTabChange('home')}
+          className={`flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+            activeTab === 'home'
+              ? 'bg-purple-600 text-white font-black shadow-md shadow-purple-600/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Home className="w-3.5 h-3.5" />
+          <span>หน้าแรก</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onTabChange('search')}
+          className={`flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+            activeTab === 'search'
+              ? 'bg-cyan-500 text-slate-950 font-black shadow-md shadow-cyan-500/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Search className="w-3.5 h-3.5" />
+          <span>1. ค้นหาผู้ใช้ไฟ</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onTabChange('recloser')}
+          className={`flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+            activeTab === 'recloser'
+              ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Zap className="w-3.5 h-3.5" />
+          <span>2. จด Recloser</span>
+        </button>
       </div>
     </header>
   );
@@ -539,8 +598,8 @@ const SyncStatusBar = React.memo(({
   isOffline: boolean;
 }) => {
   return (
-    <section className="w-full max-w-lg mb-2">
-      <div className="bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 flex items-center justify-between text-[10px] font-bold text-slate-400">
+    <section className="w-full max-w-md mx-auto mb-1.5 shrink-0">
+      <div className="bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1 flex items-center justify-between text-[10px] font-bold text-slate-400">
         <div className="flex items-center gap-1.5 truncate">
           <span className={`w-2 h-2 rounded-full ${syncStatus === 'live' ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`}></span>
           <span className="text-slate-300">ซิงก์ล่าสุด: {lastSyncFullDate || lastUpdated || 'ยังไม่อัปเดต'}</span>
@@ -562,18 +621,18 @@ const SyncStatusBar = React.memo(({
 // 3. 3D Mascot Banner Component
 const PeaBot3DMascot = React.memo(({ isThinking }: { isThinking: boolean }) => {
   return (
-    <div className="bg-gradient-to-r from-purple-900/60 via-slate-900 to-indigo-900/60 border border-purple-500/30 rounded-2xl p-2.5 mb-2 flex items-center gap-3 relative overflow-hidden shadow-lg backdrop-blur-sm group">
+    <div className="bg-gradient-to-r from-purple-900/60 via-slate-900 to-indigo-900/60 border border-purple-500/30 rounded-2xl p-2.5 mb-1 flex items-center gap-2.5 relative overflow-hidden shadow-lg backdrop-blur-sm group shrink-0">
       <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full blur-xl transition-all duration-500 ${isThinking ? 'bg-amber-500/40 animate-pulse scale-125' : 'bg-sky-500/20'}`} />
       
       <div className="relative shrink-0">
-        <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl overflow-hidden border-2 transition-all duration-300 shadow-lg ${isThinking ? 'border-amber-400 animate-bounce scale-105' : 'border-sky-400 group-hover:scale-105'}`}>
+        <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl overflow-hidden border-2 transition-all duration-300 shadow-lg ${isThinking ? 'border-amber-400 animate-bounce scale-105' : 'border-sky-400 group-hover:scale-105'}`}>
           <img 
             src={peaBotMascotImg} 
             alt="3D PEA Bot Mascot" 
             className={`w-full h-full object-cover transition-all duration-300 ${isThinking ? 'brightness-110 contrast-125' : ''}`}
           />
         </div>
-        <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border text-[10px] shadow-sm ${isThinking ? 'bg-amber-400 border-yellow-200 text-slate-950 animate-spin' : 'bg-emerald-400 border-emerald-200 text-slate-950 animate-pulse'}`}>
+        <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border text-[9px] shadow-sm ${isThinking ? 'bg-amber-400 border-yellow-200 text-slate-950 animate-spin' : 'bg-emerald-400 border-emerald-200 text-slate-950 animate-pulse'}`}>
           ⚡
         </div>
       </div>
@@ -581,7 +640,7 @@ const PeaBot3DMascot = React.memo(({ isThinking }: { isThinking: boolean }) => {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 mb-0.5">
           <span className="text-xs font-black text-amber-300 font-display">น้อง PEA Bot 3D</span>
-          <span className={`text-[8px] px-1.5 py-0.2 rounded-full font-bold ${isThinking ? 'bg-amber-400/30 text-amber-300 animate-pulse border border-amber-400/50' : 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/30'}`}>
+          <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${isThinking ? 'bg-amber-400/30 text-amber-300 animate-pulse border border-amber-400/50' : 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/30'}`}>
             {isThinking ? 'กำลังค้นหา...' : 'พร้อมลุย!'}
           </span>
         </div>
@@ -665,33 +724,33 @@ const ShareModal = React.memo(({ item, onClose }: ShareModalProps) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-4 text-slate-100 shadow-2xl space-y-3 relative">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
+      <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-md p-4 text-slate-100 shadow-2xl space-y-3.5 relative">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
               <Share2 className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-black text-white font-display">แชร์ข้อมูลและพิกัดผู้ใช้ไฟ</h3>
-              <p className="text-[10px] text-slate-400">เลือกช่องทางที่ต้องการส่งต่อข้อมูล</p>
+              <h3 className="text-sm sm:text-base font-black text-white font-display">แชร์ข้อมูลและพิกัดผู้ใช้ไฟ</h3>
+              <p className="text-[11px] text-slate-400">เลือกช่องทางที่ต้องการส่งต่อข้อมูล</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Text Preview Box */}
-        <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-300 space-y-1 select-text">
-          <div className="text-[10px] font-bold text-amber-400 mb-1 flex items-center justify-between">
+        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs font-mono text-slate-300 space-y-1.5 select-text">
+          <div className="text-[11px] font-bold text-amber-400 mb-1 flex items-center justify-between">
             <span>📄 รายละเอียดที่จะถูกส่ง:</span>
-            <span className="text-[9px] text-emerald-400 font-sans font-bold">✓ ตรงกับปุ่มคัดลอก</span>
+            <span className="text-[10px] text-emerald-400 font-sans font-bold">✓ ตรงกับปุ่มคัดลอก</span>
           </div>
-          <div className="text-[11px] leading-relaxed text-slate-200 whitespace-pre-wrap">
+          <div className="text-xs leading-relaxed text-slate-200 whitespace-pre-wrap font-sans">
             {shareText}
           </div>
         </div>
@@ -702,7 +761,7 @@ const ShareModal = React.memo(({ item, onClose }: ShareModalProps) => {
           <button
             type="button"
             onClick={handleShareLine}
-            className="w-full bg-[#06C755] hover:bg-[#05b34c] text-white font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all shadow-md"
+            className="w-full min-h-[44px] bg-[#06C755] hover:bg-[#05b34c] text-white font-black py-2.5 px-3 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all shadow-md"
           >
             <MessageCircle className="w-4 h-4 fill-white" />
             <span>แชร์เข้า LINE ทันที</span>
@@ -712,7 +771,7 @@ const ShareModal = React.memo(({ item, onClose }: ShareModalProps) => {
           <button
             type="button"
             onClick={handleNativeShare}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all shadow-md"
+            className="w-full min-h-[44px] bg-indigo-600 hover:bg-indigo-500 text-white font-black py-2.5 px-3 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all shadow-md"
           >
             <Share2 className="w-4 h-4" />
             <span>แชร์แอปอื่นๆ (Share)</span>
@@ -722,7 +781,7 @@ const ShareModal = React.memo(({ item, onClose }: ShareModalProps) => {
           <button
             type="button"
             onClick={handleCopy}
-            className="w-full bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
+            className="w-full min-h-[42px] bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-2 px-3 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
           >
             {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
             <span>{copied ? 'คัดลอกเรียบร้อยแล้ว!' : 'คัดลอกข้อความ'}</span>
@@ -733,7 +792,7 @@ const ShareModal = React.memo(({ item, onClose }: ShareModalProps) => {
             <button
               type="button"
               onClick={() => window.open(mapsUrl, '_blank', 'noopener,noreferrer')}
-              className="w-full bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
+              className="w-full min-h-[42px] bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-bold py-2 px-3 rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
             >
               <ExternalLink className="w-4 h-4" />
               <span>เปิด Google Maps</span>
@@ -793,22 +852,22 @@ const ResultCard = React.memo(({ item, onOpenMap, onShare }: ResultCardProps) =>
   }, [textToCopyAndShare]);
 
   return (
-    <div className="bg-slate-900 border border-slate-700/90 rounded-xl p-2.5 text-slate-100 shadow-md text-xs space-y-1.5">
-      <h4 className="font-black text-sky-300 leading-snug font-display break-words text-xs sm:text-sm">
+    <div className="bg-slate-900 border border-slate-700/90 rounded-2xl p-3 text-slate-100 shadow-md text-xs space-y-2">
+      <h4 className="font-bold text-sky-300 leading-normal font-display break-words text-sm sm:text-base">
         {compactFields.fullName}
       </h4>
 
-      <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-slate-300 leading-tight pt-0.5">
+      <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs text-slate-300 leading-relaxed pt-0.5">
         {compactFields.address && (
-          <div className="flex items-start gap-1 flex-1 min-w-[160px]">
-            <Home className="w-3 h-3 text-cyan-400 shrink-0 mt-0.5" />
-            <span className="break-words">{compactFields.address}</span>
+          <div className="flex items-start gap-1.5 flex-1 min-w-[160px]">
+            <Home className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+            <span className="break-words leading-relaxed">{compactFields.address}</span>
           </div>
         )}
 
-        <div className="flex items-center gap-1 shrink-0 ml-auto">
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
           {matchScore !== undefined && (
-            <span className={`text-[8px] font-bold px-1.5 py-0.2 rounded border ${
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
               matchScore === 100
                 ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700/80'
                 : matchScore >= 85
@@ -819,80 +878,80 @@ const ResultCard = React.memo(({ item, onOpenMap, onShare }: ResultCardProps) =>
             </span>
           )}
           {lat && lon && (
-            <span className="text-[8px] bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold px-1.5 py-0.2 rounded shrink-0">
+            <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold px-2 py-0.5 rounded-lg shrink-0">
               พิกัดพร้อม
             </span>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-1 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-[10px]">
+      <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-2 rounded-xl border border-slate-800 text-[11px]">
         {compactFields.ca && (
           <div>
-            <span className="text-slate-500 block text-[8px] uppercase">CA</span>
+            <span className="text-slate-400 block text-[9px] uppercase font-bold">CA</span>
             <span className="text-pink-300 font-mono font-bold">{compactFields.ca}</span>
           </div>
         )}
         {compactFields.meter && (
           <div>
-            <span className="text-slate-500 block text-[8px] uppercase">Meter</span>
+            <span className="text-slate-400 block text-[9px] uppercase font-bold">Meter</span>
             <span className="text-yellow-300 font-mono font-bold">{compactFields.meter}</span>
           </div>
         )}
         {compactFields.phone && (
           <div>
-            <span className="text-slate-500 block text-[8px] uppercase">โทร</span>
+            <span className="text-slate-400 block text-[9px] uppercase font-bold">โทร</span>
             <span className="text-green-300 font-mono font-bold">{compactFields.phone}</span>
           </div>
         )}
         {compactFields.route && (
           <div>
-            <span className="text-slate-500 block text-[8px] uppercase">สายป้อน</span>
+            <span className="text-slate-400 block text-[9px] uppercase font-bold">สายป้อน</span>
             <span className="text-sky-300 font-mono font-bold">{compactFields.route}</span>
           </div>
         )}
       </div>
 
       {lat && lon ? (
-        <div className="flex items-center gap-1 pt-1">
+        <div className="flex items-center gap-1.5 pt-1">
           <button
             type="button"
             onClick={() => onOpenMap(lat, lon)}
-            className="flex-1 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
+            className="flex-1 min-h-[38px] bg-sky-500 hover:bg-sky-400 text-slate-950 font-black py-1.5 px-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm"
             title="นำทางผ่าน Google Maps"
           >
-            <Map className="w-3 h-3" />
+            <Map className="w-3.5 h-3.5" />
             <span>นำทาง</span>
           </button>
           <button
             type="button"
             onClick={handleCopy}
-            className="bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all"
+            className="min-h-[38px] bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-1.5 px-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all"
             title="คัดลอกรายละเอียดและพิกัด"
           >
-            {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copied ? 'ก๊อปแล้ว!' : 'คัดลอก'}</span>
           </button>
           <button
             type="button"
             onClick={handleShareLineDirect}
-            className="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold py-1.5 px-2 rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all shadow-sm"
+            className="min-h-[38px] bg-[#06C755] hover:bg-[#05b34c] text-white font-bold py-1.5 px-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm"
             title="แชร์รายละเอียดเข้า LINE ทันที"
           >
-            <MessageCircle className="w-3 h-3 fill-white" />
+            <MessageCircle className="w-3.5 h-3.5 fill-white" />
             <span>LINE</span>
           </button>
           <button
             type="button"
             onClick={() => onShare(compactFields, lat, lon)}
-            className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold p-1.5 rounded-lg text-[10px] cursor-pointer active:scale-95 transition-all"
+            className="min-h-[38px] bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold p-2 rounded-xl text-xs cursor-pointer active:scale-95 transition-all flex items-center justify-center"
             title="ตัวเลือกการแชร์เพิ่มเติม"
           >
-            <Share2 className="w-3 h-3" />
+            <Share2 className="w-3.5 h-3.5" />
           </button>
         </div>
       ) : (
-        <p className="text-[10px] text-amber-400 italic">⚠️ ไม่พบพิกัด ละติจูด/ลองจิจูด ในรายการนี้</p>
+        <p className="text-[11px] text-amber-400 italic">⚠️ ไม่พบพิกัด ละติจูด/ลองจิจูด ในรายการนี้</p>
       )}
     </div>
   );
@@ -992,18 +1051,18 @@ const SearchHistorySection = React.memo(({ history, onSelectQuery, onClearHistor
   if (history.length === 0) return null;
 
   return (
-    <div className="bg-slate-900/95 border-t border-slate-800 px-2.5 py-1.5 text-xs">
-      <div className="flex items-center justify-between gap-1 mb-1">
-        <div className="flex items-center gap-1.5 text-slate-400 font-bold text-[10px] sm:text-[11px]">
-          <History className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-sky-400" />
+    <div className="bg-slate-900/95 border-t border-slate-800 px-3 py-2 text-xs">
+      <div className="flex items-center justify-between gap-1 mb-1.5">
+        <div className="flex items-center gap-1.5 text-slate-300 font-bold text-xs">
+          <History className="w-3.5 h-3.5 text-sky-400" />
           <span>ประวัติการค้นหาล่าสุด</span>
         </div>
         <button
           type="button"
           onClick={onClearHistory}
-          className="text-[10px] text-slate-500 hover:text-rose-400 flex items-center gap-1 transition-colors px-1 py-0.5 cursor-pointer active:scale-95"
+          className="text-[11px] text-slate-400 hover:text-rose-400 flex items-center gap-1 transition-colors px-1.5 py-0.5 cursor-pointer active:scale-95"
         >
-          <Trash2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+          <Trash2 className="w-3 h-3" />
           <span>ล้างประวัติ</span>
         </button>
       </div>
@@ -1012,17 +1071,17 @@ const SearchHistorySection = React.memo(({ history, onSelectQuery, onClearHistor
           <div
             key={idx}
             onClick={() => onSelectQuery(queryItem)}
-            className="shrink-0 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-700/80 hover:border-sky-400/60 rounded-full px-2.5 py-0.5 flex items-center gap-1.5 cursor-pointer text-[10px] sm:text-[11px] font-medium transition-all group active:scale-95 shadow-sm"
+            className="shrink-0 bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-700/80 hover:border-sky-400/60 rounded-full px-3 py-1 flex items-center gap-1.5 cursor-pointer text-xs font-medium transition-all group active:scale-95 shadow-sm"
           >
-            <Search className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-sky-400/70 group-hover:text-sky-300 shrink-0" />
-            <span className="max-w-[110px] sm:max-w-[140px] truncate">{queryItem}</span>
+            <Search className="w-3 h-3 text-sky-400/70 group-hover:text-sky-300 shrink-0" />
+            <span className="max-w-[120px] sm:max-w-[150px] truncate leading-normal">{queryItem}</span>
             <button
               type="button"
               onClick={(e) => onRemoveItem(queryItem, e)}
-              className="text-slate-500 hover:text-rose-400 p-0.5 rounded-full hover:bg-slate-700 transition-colors shrink-0"
+              className="text-slate-400 hover:text-rose-400 p-0.5 rounded-full hover:bg-slate-700 transition-colors shrink-0"
               title="ลบรายการนี้"
             >
-              <X className="w-2.5 h-2.5" />
+              <X className="w-3 h-3" />
             </button>
           </div>
         ))}
@@ -1182,29 +1241,29 @@ const SearchInputBar = React.memo(({
   return (
     <div className="bg-slate-900 border-t border-slate-800 flex flex-col">
       {/* PUSH UI FILTER BAR */}
-      <div className="px-2.5 pt-2 pb-1.5 bg-slate-950/90 border-b border-slate-800/80 flex flex-col gap-1.5">
+      <div className="px-3 pt-2.5 pb-2 bg-slate-950/90 border-b border-slate-800/80 flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
           {/* Main Push Button: ค้นหาจากบ้านเลขที่ / หมู่ */}
           <button
             type="button"
             id="btn-filter-house-moo"
             onClick={onToggleHouseFilter}
-            className={`flex-1 py-1.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all duration-200 shadow-sm active:scale-95 border ${
+            className={`flex-1 min-h-[42px] py-2 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all duration-200 shadow-sm active:scale-95 border ${
               isHouseFilterActive
                 ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 border-amber-300 font-black ring-2 ring-amber-400/40 shadow-amber-500/20'
-                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/80'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border-slate-700/80'
             }`}
             title={isHouseFilterActive ? 'กำลังกรอง: ค้นหาเฉพาะบ้านเลขที่/หมู่ (แตะเพื่อปิด)' : 'แตะเพื่อเปิดโหมดค้นหาเฉพาะบ้านเลขที่/หมู่'}
           >
-            <div className={`w-4 h-4 rounded-lg flex items-center justify-center shrink-0 ${
+            <div className={`w-5 h-5 rounded-lg flex items-center justify-center shrink-0 ${
               isHouseFilterActive ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-amber-400'
             }`}>
-              <Home className="w-3 h-3" />
+              <Home className="w-3.5 h-3.5" />
             </div>
             
-            <span className="truncate">ค้นหาจากบ้านเลขที่ / หมู่</span>
+            <span className="truncate leading-normal">ค้นหาจากบ้านเลขที่ / หมู่</span>
 
-            <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold shrink-0 ${
               isHouseFilterActive
                 ? 'bg-slate-950/80 text-amber-300 border border-amber-400/50'
                 : 'bg-slate-800 text-slate-400'
@@ -1217,10 +1276,10 @@ const SearchInputBar = React.memo(({
             <button
               type="button"
               onClick={onToggleHouseFilter}
-              className="py-1.5 px-2 bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 border border-slate-700 rounded-xl text-[10px] font-bold flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+              className="min-h-[42px] py-1.5 px-2.5 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-300 border border-slate-700 rounded-2xl text-xs font-bold flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
               title="ปิดโหมดกรองบ้านเลขที่"
             >
-              <X className="w-3 h-3" />
+              <X className="w-3.5 h-3.5" />
               <span>ปิดโหมด</span>
             </button>
           )}
@@ -1228,16 +1287,16 @@ const SearchInputBar = React.memo(({
 
         {/* Quick Moo Chips when House Filter is Active */}
         {isHouseFilterActive && (
-          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 pt-0.5 scrollbar-none animate-fadeIn">
-            <span className="text-[10px] font-bold text-amber-400 shrink-0 flex items-center gap-1 mr-0.5">
-              <Filter className="w-2.5 h-2.5" /> หมู่:
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-0.5 scrollbar-none animate-fadeIn">
+            <span className="text-xs font-bold text-amber-400 shrink-0 flex items-center gap-1 mr-0.5">
+              <Filter className="w-3 h-3" /> หมู่:
             </span>
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((mooNum) => (
               <button
                 key={mooNum}
                 type="button"
                 onClick={() => handleQuickMoo(`ม.${mooNum}`)}
-                className="shrink-0 bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-amber-300 border border-amber-500/30 hover:border-amber-400 px-2 py-0.5 rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer active:scale-90"
+                className="shrink-0 bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-amber-300 border border-amber-500/30 hover:border-amber-400 px-2.5 py-1 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer active:scale-90"
               >
                 ม.{mooNum}
               </button>
@@ -1248,18 +1307,18 @@ const SearchInputBar = React.memo(({
 
       {/* Listening Status Banner */}
       {isListening && (
-        <div className="bg-gradient-to-r from-rose-950 via-red-900 to-amber-950 px-3 py-1.5 border-b border-rose-600/40 flex items-center justify-between text-xs text-rose-200 animate-pulse">
+        <div className="bg-gradient-to-r from-rose-950 via-red-900 to-amber-950 px-3 py-2 border-b border-rose-600/40 flex items-center justify-between text-xs sm:text-sm text-rose-200 animate-pulse">
           <div className="flex items-center gap-2 font-medium overflow-hidden">
             <span className="relative flex h-2.5 w-2.5 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
             </span>
-            <span className="truncate">{speechFeedback || 'กำลังฟังเสียงพูด... พูดบ้านเลขที่ หรือเลข CA/Meter ได้เลย'}</span>
+            <span className="truncate leading-relaxed">{speechFeedback || 'กำลังฟังเสียงพูด... พูดบ้านเลขที่ หรือเลข CA/Meter ได้เลย'}</span>
           </div>
           <button
             type="button"
             onClick={handleToggleVoice}
-            className="text-[10px] bg-rose-800 hover:bg-rose-700 text-white font-bold px-2 py-0.5 rounded cursor-pointer shrink-0 ml-2 active:scale-95 transition-all"
+            className="text-xs bg-rose-800 hover:bg-rose-700 text-white font-bold px-2.5 py-1 rounded-lg cursor-pointer shrink-0 ml-2 active:scale-95 transition-all"
           >
             หยุดฟัง
           </button>
@@ -1269,13 +1328,13 @@ const SearchInputBar = React.memo(({
       {/* SEARCH FORM */}
       <form 
         onSubmit={handleSubmit}
-        className="p-2 sm:p-3 flex items-center gap-1.5 sm:gap-2"
+        className="p-2.5 sm:p-3 flex items-center gap-2"
       >
         <div className="relative flex-1">
           {/* Active Mode Tag inside input */}
           {isHouseFilterActive && (
-            <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none z-10 bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md">
-              <Home className="w-2.5 h-2.5 text-amber-400" />
+            <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none z-10 bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[11px] font-bold px-2 py-0.5 rounded-lg">
+              <Home className="w-3 h-3 text-amber-400" />
               <span>บ้านเลขที่/หมู่</span>
             </div>
           )}
@@ -1290,9 +1349,9 @@ const SearchInputBar = React.memo(({
                 ? "ระบุบ้านเลขที่ เช่น 12/3 ม.1 หรือ 45..."
                 : "พิมพ์หรือกดไมค์พูด CA, Meter, ชื่อ/บ้านเลขที่..."
             }
-            className={`w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium py-2.5 rounded-xl border focus:outline-none transition-all shadow-inner ${
+            className={`w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium py-2.5 rounded-2xl border focus:outline-none transition-all shadow-inner ${
               isHouseFilterActive
-                ? 'pl-28 pr-8 border-amber-400/60 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 text-amber-200'
+                ? 'pl-32 pr-8 border-amber-400/60 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 text-amber-200'
                 : 'pl-3.5 pr-8 border-slate-700 focus:border-sky-400'
             }`}
           />
@@ -1300,10 +1359,10 @@ const SearchInputBar = React.memo(({
             <button
               type="button"
               onClick={() => setChatInputText(isHouseFilterActive ? 'บ้านเลขที่ ' : '')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-1 cursor-pointer"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1 cursor-pointer"
               title="ล้างข้อความ"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -1312,7 +1371,7 @@ const SearchInputBar = React.memo(({
         <button
           type="button"
           onClick={handleToggleVoice}
-          className={`p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 border ${
+          className={`min-h-[44px] min-w-[44px] p-2.5 rounded-2xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 border ${
             isListening 
               ? 'bg-rose-600 border-rose-400 text-white animate-pulse shadow-lg shadow-rose-600/50' 
               : 'bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 border-slate-700'
@@ -1326,14 +1385,18 @@ const SearchInputBar = React.memo(({
         <button
           type="submit"
           disabled={!chatInputText.trim() || isAiThinking}
-          className={`p-2.5 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 ${
+          className={`min-h-[44px] min-w-[44px] p-2.5 rounded-2xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 ${
             isHouseFilterActive
               ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md shadow-amber-500/20'
               : 'bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white'
           }`}
           title="ส่งค้นหา"
         >
-          <Send className="w-4 h-4" />
+          {isAiThinking ? (
+            <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Send className="w-4 h-4" />
+          )}
         </button>
       </form>
     </div>
@@ -1344,8 +1407,86 @@ const SearchInputBar = React.memo(({
 // MAIN APPLICATION COMPONENT
 // ----------------------------------------------------------------------
 export default function App() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [isAiThinking, setIsAiThinking] = useState(false);
   const WELCOME_MSG_TEXT = 'หวัดดีครับ! น้อง PEA Bot พร้อมลุยแล้วจ้า ⚡\n\nพิมพ์ **เลข CA** (ขึ้นต้นด้วย 200), **เลข PEA Meter**, หรือ **ชื่อ/บ้านเลขที่** ส่งมาได้เลย เดี๋ยวผมสแกนหาพิกัดให้อย่างจ๊าบเลยครับ! 😎';
+
+  // Initial Recloser logs state with LocalStorage persistence
+  const [recloserLogs, setRecloserLogs] = useState<RecloserLog[]>(() => {
+    try {
+      const saved = localStorage.getItem('pea_recloser_logs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Could not load recloser logs from localStorage', e);
+    }
+    return [
+      {
+        id: 'rec-demo-1',
+        recloserId: 'STT6R-31',
+        recloserName: 'ปั้มน้ำมัน ตัว 2',
+        recordDate: new Date().toISOString().split('T')[0],
+        recordTime: '09:30',
+        counterBR: 148,
+        counterA: 12,
+        counterB: 8,
+        counterC: 15,
+        counterG: 4,
+        currentA: 42.5,
+        currentB: 45.1,
+        currentC: 43.8,
+        currentG: 2.1,
+        recorderName: 'ช่างธีรวัฒน์ (แผนกปฏิบัติการ)',
+        notes: 'บันทึกหน่วยประจำเดือน สภาพตู้คอนโทรลปกติ',
+        createdAt: Date.now() - 3600000
+      },
+      {
+        id: 'rec-demo-2',
+        recloserId: 'STT2R-31',
+        recloserName: '4 แยกนาหมู',
+        recordDate: new Date().toISOString().split('T')[0],
+        recordTime: '11:15',
+        counterBR: 86,
+        counterA: 5,
+        counterB: 3,
+        counterC: 6,
+        counterG: 1,
+        currentA: 58.2,
+        currentB: 56.4,
+        currentC: 60.1,
+        currentG: 1.5,
+        recorderName: 'ช่างธีรวัฒน์ (แผนกปฏิบัติการ)',
+        notes: 'ตัดแต่งกิ่งไม้พาดสายใกล้จุดติดตั้งเรียบร้อย',
+        createdAt: Date.now() - 7200000
+      }
+    ];
+  });
+
+  const handleSaveRecloserLog = useCallback((newLog: RecloserLog) => {
+    setRecloserLogs((prev) => {
+      const updated = [newLog, ...prev];
+      try {
+        localStorage.setItem('pea_recloser_logs', JSON.stringify(updated));
+      } catch (err) {
+        console.error(err);
+      }
+      return updated;
+    });
+  }, []);
+
+  const handleDeleteRecloserLog = useCallback((id: string) => {
+    setRecloserLogs((prev) => {
+      const updated = prev.filter((item) => item.id !== id);
+      try {
+        localStorage.setItem('pea_recloser_logs', JSON.stringify(updated));
+      } catch (err) {
+        console.error(err);
+      }
+      return updated;
+    });
+  }, []);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
@@ -1923,7 +2064,11 @@ export default function App() {
     <>
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
       <ShareModal item={shareModalItem} onClose={() => setShareModalItem(null)} />
-      <div className="min-h-screen bg-[#0B0F19] dark:bg-[#070A12] text-slate-100 font-sans flex flex-col items-center justify-between p-2 sm:p-4 select-none transition-colors duration-300">
+      <div className={`w-full bg-[#0B0F19] dark:bg-[#070A12] text-slate-100 font-sans flex flex-col items-center select-none transition-colors duration-300 ${
+        activeTab === 'search'
+          ? 'h-[100dvh] max-h-[100dvh] overflow-hidden p-2 pb-[66px]'
+          : 'min-h-screen p-2 sm:p-4 pb-28 justify-between'
+      }`}>
       
       {/* MOBILE-FIRST HEADER */}
       <HeaderSection
@@ -1931,6 +2076,8 @@ export default function App() {
         loading={loading}
         isSyncing={isSyncing}
         isDarkMode={isDarkMode}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
         onForceSync={handleForceSync}
         onClearChat={clearChatHistory}
         onShowSplash={handleShowSplash}
@@ -1945,65 +2092,97 @@ export default function App() {
         isOffline={isOffline}
       />
 
-      {/* CHAT CONTAINER */}
-      <main className="w-full max-w-lg flex-1 bg-slate-900/90 dark:bg-slate-950/90 border border-slate-800 dark:border-slate-800 rounded-2xl shadow-xl flex flex-col overflow-hidden mb-2 relative">
-        
-        {/* MESSAGES SCROLL AREA */}
-        <div 
-          ref={chatContainerRef}
-          className="flex-1 p-3 overflow-y-auto space-y-3.5 h-[calc(100vh-220px)] min-h-[380px] max-h-[72vh] scroll-smooth"
-        >
-          {/* Top 3D Animated Mascot Widget */}
-          <PeaBot3DMascot isThinking={isAiThinking} />
+      {/* TAB 1: HOME DASHBOARD */}
+      {activeTab === 'home' && (
+        <HomeTab
+          totalRecordsCount={allRecords.length}
+          recloserLogs={recloserLogs}
+          syncStatus={syncStatus}
+          isOffline={isOffline}
+          lastSyncFullDate={lastSyncFullDate}
+          onNavigateTab={setActiveTab}
+        />
+      )}
 
-          {chatMessages.map((msg) => (
-            <ChatMessageBubble
-              key={msg.id}
-              msg={msg}
-              onOpenMap={handleOpenMap}
-              onShare={handleShare}
-            />
-          ))}
+      {/* TAB 2: SEARCH CONSUMER GPS & METERS */}
+      {activeTab === 'search' && (
+        <main className="w-full max-w-md mx-auto flex-1 min-h-0 bg-slate-900/90 dark:bg-slate-950/90 border border-slate-800 dark:border-slate-800 rounded-2xl sm:rounded-3xl shadow-xl flex flex-col overflow-hidden relative">
+          
+          {/* MESSAGES SCROLL AREA */}
+          <div 
+            ref={chatContainerRef}
+            className="flex-1 min-h-0 p-2.5 sm:p-3 overflow-y-auto space-y-2.5 scroll-smooth"
+          >
+            {/* Top 3D Animated Mascot Widget */}
+            <PeaBot3DMascot isThinking={isAiThinking} />
 
-          {/* AI Thinking Indicator */}
-          {isAiThinking && (
-            <div className="flex items-center gap-2.5 text-xs font-bold text-amber-300 animate-pulse p-2 bg-slate-900/90 rounded-2xl border border-amber-500/40 w-fit shadow-md">
-              <div className="w-6 h-6 rounded-lg overflow-hidden shrink-0 border border-amber-400 animate-bounce">
-                <img src={peaBotMascotImg} alt="PEA Bot 3D" className="w-full h-full object-cover" />
+            {chatMessages.map((msg) => (
+              <ChatMessageBubble
+                key={msg.id}
+                msg={msg}
+                onOpenMap={handleOpenMap}
+                onShare={handleShare}
+              />
+            ))}
+
+            {/* AI Thinking Indicator */}
+            {isAiThinking && (
+              <div className="flex items-center gap-2.5 text-xs font-bold text-amber-300 animate-pulse p-2 bg-slate-900/90 rounded-2xl border border-amber-500/40 w-fit shadow-md">
+                <div className="w-6 h-6 rounded-lg overflow-hidden shrink-0 border border-amber-400 animate-bounce">
+                  <img src={peaBotMascotImg} alt="PEA Bot 3D" className="w-full h-full object-cover" />
+                </div>
+                <span className="flex items-center gap-1">
+                  <span>น้อง PEA Bot กำลังสแกนหาพิกัด...</span>
+                  <span className="text-yellow-400 animate-spin">⚡</span>
+                </span>
               </div>
-              <span className="flex items-center gap-1">
-                <span>น้อง PEA Bot กำลังสแกนหาพิกัด...</span>
-                <span className="text-yellow-400 animate-spin">⚡</span>
-              </span>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
 
-        {/* SEARCH HISTORY BAR */}
-        <SearchHistorySection
-          history={searchHistory}
-          onSelectQuery={handleSendChatMessage}
-          onClearHistory={clearSearchHistory}
-          onRemoveItem={removeSearchHistoryItem}
+          {/* SEARCH HISTORY BAR */}
+          <SearchHistorySection
+            history={searchHistory}
+            onSelectQuery={handleSendChatMessage}
+            onClearHistory={clearSearchHistory}
+            onRemoveItem={removeSearchHistoryItem}
+          />
+
+          {/* STICKY BOTTOM INPUT BAR WITH PUSH UI FILTER */}
+          <SearchInputBar
+            onSend={handleSendChatMessage}
+            isAiThinking={isAiThinking}
+            isHouseFilterActive={isHouseFilterActive}
+            onToggleHouseFilter={handleToggleHouseFilter}
+            chatInputText={chatInputText}
+            setChatInputText={setChatInputText}
+            inputRef={searchInputRef}
+          />
+
+        </main>
+      )}
+
+      {/* TAB 3: RECLOSER LOGGING */}
+      {activeTab === 'recloser' && (
+        <RecloserTab
+          recloserLogs={recloserLogs}
+          onSaveLog={handleSaveRecloserLog}
+          onDeleteLog={handleDeleteRecloserLog}
         />
+      )}
 
-        {/* STICKY BOTTOM INPUT BAR WITH PUSH UI FILTER */}
-        <SearchInputBar
-          onSend={handleSendChatMessage}
-          isAiThinking={isAiThinking}
-          isHouseFilterActive={isHouseFilterActive}
-          onToggleHouseFilter={handleToggleHouseFilter}
-          chatInputText={chatInputText}
-          setChatInputText={setChatInputText}
-          inputRef={searchInputRef}
-        />
+      {/* FOOTER (Shown on Home and Recloser tabs) */}
+      {activeTab !== 'search' && (
+        <footer className="text-[10px] font-bold text-slate-500 text-center py-1 mb-2">
+          PEA Smart Field Operations • การไฟฟ้าส่วนภูมิภาค
+        </footer>
+      )}
 
-      </main>
-
-      {/* FOOTER */}
-      <footer className="text-[10px] font-bold text-slate-500 text-center py-1">
-        PEA Meter & GPS AI Assistant • การไฟฟ้าส่วนภูมิภาค
-      </footer>
+      {/* BOTTOM NAVIGATION BAR */}
+      <BottomNavBar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        recloserCount={recloserLogs.length}
+      />
 
     </div>
     </>

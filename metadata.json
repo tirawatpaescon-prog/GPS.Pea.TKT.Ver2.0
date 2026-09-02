@@ -1,6 +1,6 @@
 {
   "name": "GPS.Pea.TKT",
-  "description": "ค้นหาตำแหน่งและพิกัดผู้ใช้ไฟ PEA จากข้อมูลเครื่องวัดและแผนที่",
-  "requestFramePermissions": ["microphone"],
+  "description": "ระบบสารสนเทศภาคสนาม PEA: หน้าหลัก, ค้นหาพิกัดผู้ใช้ไฟ และบันทึกจดหน่วย Recloser",
+  "requestFramePermissions": ["microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
