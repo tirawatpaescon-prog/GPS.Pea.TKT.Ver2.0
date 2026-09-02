@@ -6,12 +6,9 @@ import {
   Database, 
   Activity, 
   CheckCircle2, 
-  Clock, 
-  ArrowRight, 
   Wifi, 
   WifiOff, 
   FileText, 
-  PlusCircle, 
   Sparkles,
   Smartphone,
   ChevronRight,
@@ -39,8 +36,6 @@ export const HomeTab: React.FC<HomeTabProps> = ({
   lastSyncFullDate,
   onNavigateTab
 }) => {
-  const latestRecloser = recloserLogs.length > 0 ? recloserLogs[0] : null;
-
   return (
     <div className="w-full flex flex-col gap-3 pb-6 max-w-md mx-auto animate-fadeIn">
       
@@ -56,9 +51,9 @@ export const HomeTab: React.FC<HomeTabProps> = ({
               <span className="truncate">PEA Smart Field System</span>
             </div>
             <h1 className="text-lg sm:text-xl font-black text-white tracking-tight leading-snug">
-              ระบบสารสนเทศ<br />
+              ระบบช่วยงานและค้นหาข้อมูล<br />
               <span className="bg-gradient-to-r from-amber-300 via-purple-200 to-cyan-300 bg-clip-text text-transparent">
-                การไฟฟ้าส่วนภูมิภาค
+                การไฟฟ้าส่วนภูมิภาค สาขาอำเภอ ท่าคันโท
               </span>
             </h1>
             <p className="text-[11px] sm:text-xs text-slate-300 mt-1 font-medium leading-relaxed">
@@ -200,74 +195,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
         </div>
       </div>
 
-      {/* 3. RECENT RECLOSER LOG PREVIEW */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-3.5 sm:p-4 shadow-md">
-        <div className="flex items-center justify-between mb-2.5">
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-amber-400" />
-            <h4 className="text-xs font-black text-white">บันทึก Recloser ล่าสุด</h4>
-          </div>
-          <button
-            onClick={() => onNavigateTab('recloser')}
-            className="text-[11px] font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
-          >
-            ดูประวัติ ({recloserLogs.length})
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {latestRecloser ? (
-          <div 
-            onClick={() => onNavigateTab('recloser')}
-            className="bg-slate-950/90 hover:bg-slate-900 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-3 cursor-pointer transition-all flex flex-col gap-2 shadow-inner"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 font-black text-xs px-2 py-0.5 rounded-lg font-mono">
-                  {latestRecloser.recloserId}
-                </span>
-                <span className="text-xs font-bold text-white truncate max-w-[150px] sm:max-w-[200px]">
-                  {latestRecloser.recloserName}
-                </span>
-              </div>
-              <span className="text-[10px] text-amber-300 font-mono font-bold">
-                {latestRecloser.recordDate} {latestRecloser.recordTime} น.
-              </span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-1.5 text-[10px] bg-slate-900/95 p-2 rounded-xl border border-slate-800 font-mono">
-              <div>
-                <span className="text-slate-400 block text-[9px]">Counter B/R:</span>
-                <span className="text-amber-300 font-bold">{latestRecloser.counterBR ?? '-'} ครั้ง</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[9px]">Current A/B/C:</span>
-                <span className="text-cyan-300 font-bold truncate block">
-                  {latestRecloser.currentA ?? '-'}/{latestRecloser.currentB ?? '-'}/{latestRecloser.currentC ?? '-'} A
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[9px]">Current Ig:</span>
-                <span className="text-teal-300 font-bold truncate block">{latestRecloser.currentG !== undefined ? `${latestRecloser.currentG} A` : '-'}</span>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-slate-950/60 border border-dashed border-slate-800 rounded-2xl p-4 text-center">
-            <Zap className="w-5 h-5 text-slate-600 mx-auto mb-1" />
-            <p className="text-xs text-slate-400 font-medium">ยังไม่มีข้อมูลการจดหน่วย Recloser</p>
-            <button
-              onClick={() => onNavigateTab('recloser')}
-              className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-amber-400 hover:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-3 py-1 rounded-xl cursor-pointer"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              จดหน่วย Recloser รายการแรก
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* 4. SYSTEM STATUS PILL */}
+      {/* 3. SYSTEM STATUS PILL */}
       <div className="bg-slate-900/70 border border-slate-800/80 rounded-2xl p-2.5 sm:p-3 flex items-center justify-between text-xs text-slate-400">
         <div className="flex items-center gap-2">
           {isOffline ? (

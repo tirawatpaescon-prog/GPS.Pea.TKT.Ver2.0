@@ -494,7 +494,7 @@ const HeaderSection = React.memo(({
               </span>
             </div>
             <p className="text-[10px] font-bold text-slate-400 truncate">
-              {activeTab === 'home' && 'ระบบสารสนเทศภาคสนาม PEA'}
+              {activeTab === 'home' && 'ระบบช่วยงานภาคสนาม PEA.TKT'}
               {activeTab === 'search' && `ค้นหาพิกัดผู้ใช้ไฟ (${totalRecordsCount ? totalRecordsCount.toLocaleString() : 0} รายการ)`}
               {activeTab === 'recloser' && 'บันทึกจดหน่วย Recloser (7 จุดหลัก)'}
             </p>
@@ -2171,7 +2171,7 @@ export default function App() {
       {/* FOOTER (Shown on Home and Recloser tabs) */}
       {activeTab !== 'search' && (
         <footer className="text-[10px] font-bold text-slate-500 text-center py-1 mb-2">
-          PEA Smart Field Operations • การไฟฟ้าส่วนภูมิภาค
+          PEA Smart Field Operations • การไฟฟ้าส่วนภูมิภาค สาขาอำเภอ ท่าคันโท
         </footer>
       )}
 
