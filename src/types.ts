@@ -72,7 +72,6 @@ export interface RecloserLog {
   currentC?: number;         // C (Ic)
   currentG?: number;         // G (Ig)
   
-  recorderName?: string;
   notes?: string;
   createdAt: number;
 }

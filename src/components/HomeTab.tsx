@@ -247,8 +247,8 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                 </span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[9px]">ผู้จด:</span>
-                <span className="text-slate-200 font-medium truncate block">{latestRecloser.recorderName || 'เจ้าหน้าที่ PEA'}</span>
+                <span className="text-slate-400 block text-[9px]">Current Ig:</span>
+                <span className="text-teal-300 font-bold truncate block">{latestRecloser.currentG !== undefined ? `${latestRecloser.currentG} A` : '-'}</span>
               </div>
             </div>
           </div>

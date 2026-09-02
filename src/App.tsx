@@ -1438,7 +1438,6 @@ export default function App() {
         currentB: 45.1,
         currentC: 43.8,
         currentG: 2.1,
-        recorderName: 'ช่างธีรวัฒน์ (แผนกปฏิบัติการ)',
         notes: 'บันทึกหน่วยประจำเดือน สภาพตู้คอนโทรลปกติ',
         createdAt: Date.now() - 3600000
       },
@@ -1457,7 +1456,6 @@ export default function App() {
         currentB: 56.4,
         currentC: 60.1,
         currentG: 1.5,
-        recorderName: 'ช่างธีรวัฒน์ (แผนกปฏิบัติการ)',
         notes: 'ตัดแต่งกิ่งไม้พาดสายใกล้จุดติดตั้งเรียบร้อย',
         createdAt: Date.now() - 7200000
       }

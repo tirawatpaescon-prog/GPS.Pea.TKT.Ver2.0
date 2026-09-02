@@ -21,9 +21,12 @@ import {
   Sparkles,
   Share2,
   FileText,
-  Clock3
+  Clock3,
+  Printer,
+  FileSpreadsheet
 } from 'lucide-react';
 import { RecloserLog, PresetRecloser } from '../types';
+import { RecloserExportModal } from './RecloserExportModal';
 
 export const PRESET_RECLOSERS: PresetRecloser[] = [
   { id: 'STT6R-31', name: 'ปั้มน้ำมัน ตัว 2' },
@@ -89,6 +92,15 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
   const [historySearchFilter, setHistorySearchFilter] = useState('');
   const [subRecloserFilter, setSubRecloserFilter] = useState<string>('all');
 
+  // Export Modal State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportInitialDate, setExportInitialDate] = useState<string | null>(null);
+
+  const openExportModal = (initialDate: string | null = null) => {
+    setExportInitialDate(initialDate);
+    setShowExportModal(true);
+  };
+
   // Form State
   const [recordDate, setRecordDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [recordTime, setRecordTime] = useState(() => {
@@ -110,13 +122,6 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
   const [currentG, setCurrentG] = useState<number | ''>('');
 
   // Additional Meta
-  const [recorderName, setRecorderName] = useState(() => {
-    try {
-      return localStorage.getItem('pea_last_recorder_name') || '';
-    } catch {
-      return '';
-    }
-  });
   const [notes, setNotes] = useState('');
 
   // Current selected preset object
@@ -177,7 +182,6 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
         (l) =>
           l.recloserId.toLowerCase().includes(q) ||
           l.recloserName.toLowerCase().includes(q) ||
-          (l.recorderName && l.recorderName.toLowerCase().includes(q)) ||
           (l.notes && l.notes.toLowerCase().includes(q))
       );
       return matchesDate || matchesAnyLog;
@@ -202,14 +206,6 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
       }
     }
 
-    if (recorderName.trim()) {
-      try {
-        localStorage.setItem('pea_last_recorder_name', recorderName.trim());
-      } catch (err) {
-        console.error(err);
-      }
-    }
-
     const newLog: RecloserLog = {
       id: `rec-${Date.now()}`,
       recloserId: currentPreset.id,
@@ -225,7 +221,6 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
       currentB: currentB !== '' ? Number(currentB) : undefined,
       currentC: currentC !== '' ? Number(currentC) : undefined,
       currentG: currentG !== '' ? Number(currentG) : undefined,
-      recorderName: recorderName.trim() || undefined,
       notes: notes.trim() || undefined,
       createdAt: Date.now()
     };
@@ -274,7 +269,6 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
       'Current B (A)',
       'Current C (A)',
       'Current G (A)',
-      'ผู้จดบันทึก',
       'หมายเหตุ'
     ];
 
@@ -293,7 +287,6 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
       log.currentB ?? '',
       log.currentC ?? '',
       log.currentG ?? '',
-      `"${log.recorderName || ''}"`,
       `"${log.notes || ''}"`
     ]);
 
@@ -324,7 +317,7 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
  - B: ${log.currentB !== undefined ? `${log.currentB} A` : '-'}
  - C: ${log.currentC !== undefined ? `${log.currentC} A` : '-'}
  - G: ${log.currentG !== undefined ? `${log.currentG} A` : '-'}
-${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}👷‍♂️ ผู้บันทึก: ${log.recorderName || 'เจ้าหน้าที่ PEA'}`;
+${log.notes ? `📝 หมายเหตุ: ${log.notes}` : ''}`;
 
     navigator.clipboard.writeText(text);
     setCopiedId(log.id);
@@ -341,11 +334,6 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}👷‍♂️
 📈 Current A/B/C/G: ${log.currentA ?? '-'}/${log.currentB ?? '-'}/${log.currentC ?? '-'}/${log.currentG ?? '-'} A
 ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
     });
-
-    const recorders = Array.from(new Set(logs.map((l) => l.recorderName).filter(Boolean)));
-    if (recorders.length > 0) {
-      text += `\n👷‍♂️ ผู้บันทึก: ${recorders.join(', ')}`;
-    }
 
     navigator.clipboard.writeText(text);
     setCopiedId(`day-${dateStr}`);
@@ -375,14 +363,26 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
             </div>
           </div>
 
-          <button
-            onClick={handleExportCSV}
-            title="ส่งออกประวัติเป็นไฟล์ CSV"
-            className="bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white border border-slate-700 px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shrink-0 active:scale-95 shadow-sm"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>CSV</span>
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              id="btn-open-export-modal"
+              type="button"
+              onClick={() => openExportModal(null)}
+              title="ออกเอกสารรายงาน (PDF / Excel / Memo)"
+              className="bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 px-2.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1 transition-all cursor-pointer shrink-0 active:scale-95 shadow-md shadow-amber-500/20"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>ออกรายงาน</span>
+            </button>
+
+            <button
+              onClick={handleExportCSV}
+              title="ดาวน์โหลดไฟล์ CSV ทันที"
+              className="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 p-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shrink-0 active:scale-95 shadow-sm"
+            >
+              <Download className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {/* TOP SEGMENT SWITCHER: [📝 บันทึกค่าใหม่] vs [📜 ดูย้อนหลังตามวันที่] */}
@@ -759,22 +759,8 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
             </div>
           </div>
 
-          {/* STEP 5: RECORDER & NOTES */}
+          {/* STEP 5: NOTES */}
           <div className="bg-slate-900/95 border border-slate-800 rounded-3xl p-3.5 sm:p-4 shadow-xl flex flex-col gap-2.5 text-xs">
-            <div>
-              <label className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center gap-1">
-                <User className="w-3.5 h-3.5 text-slate-400" />
-                <span>ผู้จดบันทึก / ช่างผู้ปฏิบัติงาน</span>
-              </label>
-              <input
-                type="text"
-                value={recorderName}
-                onChange={(e) => setRecorderName(e.target.value)}
-                placeholder="เช่น ช่างธีรวัฒน์ (แผนกปฏิบัติการ)"
-                className="w-full bg-slate-950 text-white placeholder-slate-500 p-2.5 rounded-xl border border-slate-700 focus:border-amber-400 text-[14px] sm:text-xs"
-              />
-            </div>
-
             <div>
               <label className="block text-[11px] font-bold text-slate-300 mb-1">
                 หมายเหตุเพิ่มเติม (ถ้ามี)
@@ -813,24 +799,36 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
           {/* --------------------------------------------------------------------- */}
           {!selectedHistoryDate ? (
             <>
-              {/* SEARCH BOX FOR DATES OR LOGS */}
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={historySearchFilter}
-                  onChange={(e) => setHistorySearchFilter(e.target.value)}
-                  placeholder="ค้นหาวันที่, เดือน, รหัส Recloser หรือชื่อช่าง..."
-                  className="w-full bg-slate-900/90 text-xs text-white placeholder-slate-500 pl-8.5 pr-8 py-2.5 rounded-2xl border border-slate-800 focus:outline-none focus:border-cyan-400 shadow-inner"
-                />
-                {historySearchFilter && (
-                  <button
-                    onClick={() => setHistorySearchFilter('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
+              {/* SEARCH BOX & QUICK EXPORT BAR */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={historySearchFilter}
+                    onChange={(e) => setHistorySearchFilter(e.target.value)}
+                    placeholder="ค้นหาวันที่, เดือน, รหัส Recloser หรือชื่อช่าง..."
+                    className="w-full bg-slate-900/90 text-xs text-white placeholder-slate-500 pl-8.5 pr-8 py-2.5 rounded-2xl border border-slate-800 focus:outline-none focus:border-cyan-400 shadow-inner"
+                  />
+                  {historySearchFilter && (
+                    <button
+                      onClick={() => setHistorySearchFilter('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => openExportModal(null)}
+                  title="ออกเอกสารรายงานรวม"
+                  className="bg-slate-900 hover:bg-slate-800 border border-amber-500/40 hover:border-amber-400 text-amber-300 py-2.5 px-3 rounded-2xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 transition-all shadow-sm active:scale-95"
+                >
+                  <FileText className="w-4 h-4 text-amber-400" />
+                  <span className="hidden sm:inline">ออกรายงาน</span>
+                </button>
               </div>
 
               {/* DATE CARDS LIST */}
@@ -840,7 +838,14 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                     <CalendarDays className="w-4 h-4 text-cyan-400" />
                     <span>เลือกวันที่เพื่อดูข้อมูล ({filteredDateGroups.length} วัน):</span>
                   </span>
-                  <span className="text-[10px] text-slate-500">แตะเพื่อเปิดดู</span>
+                  <button
+                    type="button"
+                    onClick={() => openExportModal(null)}
+                    className="text-[11px] font-bold text-amber-300 hover:text-amber-200 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Printer className="w-3 h-3" />
+                    <span>พิมพ์รายงาน PDF</span>
+                  </button>
                 </div>
 
                 {filteredDateGroups.length > 0 ? (
@@ -900,18 +905,11 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                           ))}
                         </div>
 
-                        {/* Footer: Recorders & Tap Hint */}
+                        {/* Footer: Tap Hint */}
                         <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                          <div className="truncate max-w-[200px]">
-                            {recorders.length > 0 ? (
-                              <span className="flex items-center gap-1">
-                                <User className="w-3 h-3 text-slate-500" />
-                                <span className="truncate">{recorders.join(', ')}</span>
-                              </span>
-                            ) : (
-                              <span>เจ้าหน้าที่ PEA</span>
-                            )}
-                          </div>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {formatThaiDateShort(group.date)}
+                          </span>
 
                           <div className="flex items-center gap-1 font-bold text-cyan-400 group-hover:text-cyan-300">
                             <span>แตะดูบันทึก</span>
@@ -961,26 +959,38 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                     <span>← เลือกวันที่อื่น</span>
                   </button>
 
-                  <button
-                    onClick={() => handleCopyDaySummary(selectedHistoryDate, logsForSelectedDate)}
-                    className={`inline-flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer active:scale-95 ${
-                      copiedId === `day-${selectedHistoryDate}`
-                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
-                        : 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500 hover:text-slate-950 border-cyan-500/40'
-                    }`}
-                  >
-                    {copiedId === `day-${selectedHistoryDate}` ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>คัดลอกสรุปทั้งวันแล้ว</span>
-                      </>
-                    ) : (
-                      <>
-                        <Share2 className="w-3.5 h-3.5" />
-                        <span>คัดลอกทั้งวันส่ง LINE</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    <button
+                      type="button"
+                      onClick={() => openExportModal(selectedHistoryDate)}
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500 hover:text-slate-950 text-amber-300 transition-all cursor-pointer active:scale-95 shadow-sm"
+                      title="ออกเอกสารรายงานเฉพาะวันนี้ (PDF / Excel)"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-amber-400" />
+                      <span>ออกรายงานวันนี้</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleCopyDaySummary(selectedHistoryDate, logsForSelectedDate)}
+                      className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer active:scale-95 ${
+                        copiedId === `day-${selectedHistoryDate}`
+                          ? 'bg-emerald-600 text-white border-emerald-500 shadow-md'
+                          : 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500 hover:text-slate-950 border-cyan-500/40'
+                      }`}
+                    >
+                      {copiedId === `day-${selectedHistoryDate}` ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>คัดลอกแล้ว</span>
+                        </>
+                      ) : (
+                        <>
+                          <Share2 className="w-3.5 h-3.5" />
+                          <span>ส่ง LINE</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 flex items-center justify-between">
@@ -1057,12 +1067,6 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                             <h4 className="text-xs font-black text-white">
                               {log.recloserName}
                             </h4>
-                            {log.recorderName && (
-                              <div className="text-[10px] text-slate-400 flex items-center gap-1">
-                                <User className="w-2.5 h-2.5 text-slate-500" />
-                                <span>{log.recorderName}</span>
-                              </div>
-                            )}
                           </div>
                         </div>
 
@@ -1203,6 +1207,14 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
 
         </div>
       )}
+
+      {/* RECLOSER REPORT EXPORT MODAL */}
+      <RecloserExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        recloserLogs={recloserLogs}
+        initialSelectedDate={exportInitialDate}
+      />
 
     </div>
   );
