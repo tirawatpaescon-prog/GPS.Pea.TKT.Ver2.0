@@ -13,7 +13,9 @@ import {
   Smartphone,
   ChevronRight,
   ShieldAlert,
-  Gauge
+  Gauge,
+  Lightbulb,
+  Building2
 } from 'lucide-react';
 import { ActiveTab, RecloserLog } from '../types';
 import peaBotMascotImg from '../assets/images/pea_bot_mascot_1786454271309.jpg';
@@ -152,15 +154,15 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           </div>
         </div>
 
-        {/* FUNCTION 2: จดหน่วย Recloser (7 จุดหลัก) */}
+        {/* FUNCTION 2: สำรวจโคมไฟส่องสว่าง (106 หม้อแปลง / 23 หมู่บ้าน) */}
         <div 
-          id="btn-nav-recloser"
-          onClick={() => onNavigateTab('recloser')}
-          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-amber-950/30 to-slate-900 hover:from-amber-950/70 hover:via-orange-950/50 hover:to-slate-900 border border-slate-800 hover:border-amber-500/60 rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-lg hover:shadow-amber-900/20 active:scale-[0.98]"
+          id="btn-nav-streetlight"
+          onClick={() => onNavigateTab('streetlight')}
+          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-amber-950/40 to-slate-900 hover:from-amber-950/80 hover:via-yellow-950/60 hover:to-slate-900 border border-slate-800 hover:border-amber-500/60 rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-lg hover:shadow-amber-900/20 active:scale-[0.98]"
         >
           <div className="flex items-center justify-between gap-3">
             <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 group-hover:bg-amber-500 group-hover:text-slate-950 transition-all shadow-inner shrink-0">
-              <Zap className="w-5 h-5 sm:w-6 sm:h-6" />
+              <Lightbulb className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
 
             <div className="flex-1 min-w-0">
@@ -169,6 +171,48 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                   ฟังก์ชัน 2
                 </span>
                 <h3 className="text-sm sm:text-base font-black text-white group-hover:text-amber-300 transition-colors truncate">
+                  สำรวจโคมไฟส่องสว่าง (106 หม้อแปลง)
+                </h3>
+              </div>
+              <p className="text-[11px] sm:text-xs text-slate-400 font-medium line-clamp-2 leading-relaxed">
+                แยกตาม 23 หมู่บ้าน พร้อมปุ่มบันทึกสถานะ สำรวจแล้ว/ยังไม่สำรวจ และพิกัด Google Maps
+              </p>
+
+              <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px] font-bold text-amber-300">
+                <span className="flex items-center gap-1 bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded-lg">
+                  <Building2 className="w-3 h-3 text-amber-400" />
+                  เลือกรายหมู่บ้าน (Dropdown)
+                </span>
+                <span className="flex items-center gap-1 bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded-lg">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                  กดบันทึกสถานะได้ทันที
+                </span>
+              </div>
+            </div>
+
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 group-hover:bg-amber-500 group-hover:text-slate-950 text-slate-400 flex items-center justify-center shrink-0 transition-all">
+              <ChevronRight className="w-4 h-4" />
+            </div>
+          </div>
+        </div>
+
+        {/* FUNCTION 3: จดหน่วย Recloser (7 จุดหลัก) */}
+        <div 
+          id="btn-nav-recloser"
+          onClick={() => onNavigateTab('recloser')}
+          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-orange-950/30 to-slate-900 hover:from-orange-950/70 hover:via-amber-950/50 hover:to-slate-900 border border-slate-800 hover:border-orange-500/60 rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-lg hover:shadow-orange-900/20 active:scale-[0.98]"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-orange-500/20 border border-orange-500/40 flex items-center justify-center text-orange-400 group-hover:bg-orange-500 group-hover:text-slate-950 transition-all shadow-inner shrink-0">
+              <Zap className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                  ฟังก์ชัน 3
+                </span>
+                <h3 className="text-sm sm:text-base font-black text-white group-hover:text-orange-300 transition-colors truncate">
                   จดหน่วย Recloser (7 จุดหลัก)
                 </h3>
               </div>
@@ -176,19 +220,19 @@ export const HomeTab: React.FC<HomeTabProps> = ({
                 บันทึกค่า Counter (B/R, A, B, C, G) และ Current (A, B, C, G) พร้อมดูประวัติย้อนหลัง
               </p>
 
-              <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px] font-bold text-amber-300">
-                <span className="flex items-center gap-1 bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded-lg">
-                  <Activity className="w-3 h-3 text-amber-400" />
+              <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px] font-bold text-orange-300">
+                <span className="flex items-center gap-1 bg-orange-950/80 border border-orange-800/60 px-2 py-0.5 rounded-lg">
+                  <Activity className="w-3 h-3 text-orange-400" />
                   Counter B/R & เฟส
                 </span>
-                <span className="flex items-center gap-1 bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded-lg">
+                <span className="flex items-center gap-1 bg-orange-950/80 border border-orange-800/60 px-2 py-0.5 rounded-lg">
                   <FileText className="w-3 h-3 text-cyan-400" />
                   ดูย้อนหลัง & ส่ง LINE
                 </span>
               </div>
             </div>
 
-            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 group-hover:bg-amber-500 group-hover:text-slate-950 text-slate-400 flex items-center justify-center shrink-0 transition-all">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 group-hover:bg-orange-500 group-hover:text-slate-950 text-slate-400 flex items-center justify-center shrink-0 transition-all">
               <ChevronRight className="w-4 h-4" />
             </div>
           </div>

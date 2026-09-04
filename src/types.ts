@@ -76,4 +76,4 @@ export interface RecloserLog {
   createdAt: number;
 }
 
-export type ActiveTab = 'home' | 'search' | 'recloser';
+export type ActiveTab = 'home' | 'search' | 'streetlight' | 'recloser';

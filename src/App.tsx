@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import Papa from 'papaparse';
 import { SplashScreen } from './components/SplashScreen';
 import { HomeTab } from './components/HomeTab';
+import { StreetlightTab } from './components/StreetlightTab';
 import { RecloserTab } from './components/RecloserTab';
 import { BottomNavBar } from './components/BottomNavBar';
 import { ActiveTab, RecloserLog } from './types';
@@ -2159,7 +2160,12 @@ export default function App() {
         </main>
       )}
 
-      {/* TAB 3: RECLOSER LOGGING */}
+      {/* TAB 3: STREETLIGHT SURVEY (สำรวจโคมไฟ) */}
+      {activeTab === 'streetlight' && (
+        <StreetlightTab />
+      )}
+
+      {/* TAB 4: RECLOSER LOGGING */}
       {activeTab === 'recloser' && (
         <RecloserTab
           recloserLogs={recloserLogs}

@@ -1,6 +1,6 @@
 {
   "name": "GPS.Pea.TKT",
-  "description": "ระบบช่วยงานภาคสนาม PEA.TKT: หน้าหลัก, ค้นหาพิกัดผู้ใช้ไฟ และบันทึกจดหน่วย Recloser",
+  "description": "ระบบช่วยงานภาคสนาม PEA.TKT: หน้าหลัก, ค้นหาพิกัดผู้ใช้ไฟ, สำรวจโคมไฟส่องสว่างรายหมู่บ้าน และบันทึกจดหน่วย Recloser",
   "requestFramePermissions": ["microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
