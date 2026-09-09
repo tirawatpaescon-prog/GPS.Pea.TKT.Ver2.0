@@ -1,0 +1,35 @@
+{
+  "entities": {
+    "StreetlightSurveyStatus": {
+      "title": "StreetlightSurveyStatus",
+      "description": "Status record for a streetlight transformer survey",
+      "type": "object",
+      "properties": {
+        "peano": {
+          "type": "string",
+          "description": "PEA transformer number (e.g., 65-069274)"
+        },
+        "status": {
+          "type": "string",
+          "description": "Survey status",
+          "enum": ["สำรวจแล้ว", "ยังไม่สำรวจ"]
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Timestamp in milliseconds when status was updated"
+        },
+        "village": {
+          "type": "string",
+          "description": "Associated village name"
+        }
+      },
+      "required": ["peano", "status", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/streetlight_surveys/{peano}": {
+      "schema": "StreetlightSurveyStatus",
+      "description": "Real-time survey status for each transformer, synced across all field technicians"
+    }
+  }
+}

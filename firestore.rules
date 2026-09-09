@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /streetlight_surveys/{peano} {
+      allow read: if true;
+      allow write: if request.resource.data.peano is string
+                   && request.resource.data.status in ['สำรวจแล้ว', 'ยังไม่สำรวจ']
+                   && request.resource.data.updatedAt is number;
+    }
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}

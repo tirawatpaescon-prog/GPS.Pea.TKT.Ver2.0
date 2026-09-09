@@ -26,6 +26,12 @@ import {
   CheckCheck
 } from 'lucide-react';
 import { STREETLIGHT_TRANSFORMERS, STREETLIGHT_VILLAGES, StreetlightTransformer } from '../data/streetlightSurveyData';
+import {
+  subscribeToStreetlightSurveys,
+  setTransformerSurveyStatus,
+  bulkSetTransformerSurveyStatuses,
+  testFirestoreConnection
+} from '../lib/firebase';
 
 const STORAGE_KEY = 'pea_streetlight_survey_statuses_v1';
 
@@ -63,64 +69,49 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
   // Central Cloud/Server Sync State
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
-  const [serverConnected, setServerConnected] = useState<boolean>(true);
+  const [cloudConnected, setCloudConnected] = useState<boolean>(true);
 
-  // Fetch latest statuses from Central Server API
-  const fetchCentralStatuses = useCallback(async (isSilent = false) => {
-    if (!isSilent) setIsSyncing(true);
-    try {
-      const res = await fetch('/api/streetlight/status');
-      if (!res.ok) throw new Error('API request failed');
-      const data = await res.json();
-      if (data.success && data.statuses) {
-        setServerConnected(true);
+  // Subscribe to Real-time Firebase Firestore updates
+  useEffect(() => {
+    setIsSyncing(true);
+
+    const unsubscribe = subscribeToStreetlightSurveys(
+      (remoteStatuses) => {
+        setIsSyncing(false);
+        setCloudConnected(true);
         setLastSyncTime(new Date());
 
         setStatusMap((prev) => {
-          const serverStatuses: Record<string, StoredStatus> = data.statuses;
-          const serverKeys = Object.keys(serverStatuses);
+          const remoteKeys = Object.keys(remoteStatuses);
 
-          // If server database is completely empty on first launch, initialize server with current local data
-          if (serverKeys.length === 0 && Object.keys(prev).length > 0) {
-            fetch('/api/streetlight/status/bulk', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ statuses: prev }),
-            }).catch(() => {});
+          // If Cloud Database is completely blank on very first launch, initialize it with dataset
+          if (remoteKeys.length === 0 && Object.keys(prev).length > 0) {
+            bulkSetTransformerSurveyStatuses(prev).catch((err) => {
+              console.warn('Initial cloud seed error:', err);
+            });
             return prev;
           }
 
-          const merged = { ...prev };
-          for (const [peano, serverItem] of Object.entries(serverStatuses)) {
-            // Adopt server value if newer or missing locally
-            const localItem = merged[peano];
-            if (!localItem || !localItem.updatedAt || (serverItem.updatedAt && serverItem.updatedAt >= localItem.updatedAt)) {
-              merged[peano] = serverItem;
-            }
-          }
-          return merged;
+          // Merge real-time changes from cloud
+          return {
+            ...prev,
+            ...remoteStatuses
+          };
         });
+      },
+      (err) => {
+        console.warn('[Firebase] Firestore sync error, using local data:', err);
+        setCloudConnected(false);
+        setIsSyncing(false);
       }
-    } catch (err) {
-      // Server may be starting or offline, use local data gracefully
-      setServerConnected(false);
-    } finally {
-      if (!isSilent) setIsSyncing(false);
-    }
+    );
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  // Sync on mount and poll every 8 seconds so other devices' changes appear automatically
-  useEffect(() => {
-    fetchCentralStatuses(false);
-
-    const interval = setInterval(() => {
-      fetchCentralStatuses(true);
-    }, 8000);
-
-    return () => clearInterval(interval);
-  }, [fetchCentralStatuses]);
-
-  // Save to localStorage as offline cache whenever statusMap changes
+  // Save to localStorage as local offline backup
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(statusMap));
@@ -147,11 +138,28 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Toggle status handler with Central Server sync
+  // Manual Sync / Check Connection
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    try {
+      const ok = await testFirestoreConnection();
+      setCloudConnected(ok);
+      setLastSyncTime(new Date());
+      showToast(ok ? '☁️ เชื่อมต่อ Cloud Database สำเร็จ (Real-time ทุกเครื่อง)' : '⚠️ โหมดออฟไลน์ (กำลังรอสัญญาณ)');
+    } catch (e) {
+      setCloudConnected(false);
+      showToast('⚠️ ไม่สามารถเชื่อมต่อระบบ Cloud ได้');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Toggle status handler with Real-time Cloud Sync
   const handleToggleStatus = async (peano: string) => {
     const current = statusMap[peano]?.status || 'ยังไม่สำรวจ';
     const nextStatus = current === 'สำรวจแล้ว' ? 'ยังไม่สำรวจ' : 'สำรวจแล้ว';
     const now = Date.now();
+    const item = STREETLIGHT_TRANSFORMERS.find((t) => t.peano === peano);
 
     // 1. Optimistic instant local update
     setStatusMap((prev) => ({
@@ -168,26 +176,18 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
         : `⏳ ปรับหม้อแปลง ${peano} เป็น "ยังไม่สำรวจ" (ซิงค์ทุกเครื่อง)`
     );
 
-    // 2. Transmit to central server so all mobile devices update
+    // 2. Real-time broadcast to all mobile devices via Cloud Firestore
     try {
-      const res = await fetch('/api/streetlight/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ peano, status: nextStatus, updatedAt: now }),
-      });
-      if (res.ok) {
-        setServerConnected(true);
-        setLastSyncTime(new Date());
-      } else {
-        setServerConnected(false);
-      }
+      await setTransformerSurveyStatus(peano, nextStatus, item?.village);
+      setCloudConnected(true);
+      setLastSyncTime(new Date());
     } catch (err) {
-      console.warn('Central sync queue error:', err);
-      setServerConnected(false);
+      console.warn('Firebase sync write error:', err);
+      setCloudConnected(false);
     }
   };
 
-  // Reset to original status from CSV file with central broadcast
+  // Reset to original status from CSV file with Cloud broadcast
   const handleResetToDefault = async () => {
     if (window.confirm('ต้องการรีเซ็ตสถานะการสำรวจทั้งหมดกลับเป็นค่าเริ่มต้นตามไฟล์ระบบ (ทุกเครื่องจะถูกปรับเป็นค่าเริ่มต้นด้วย) หรือไม่?')) {
       const defaults: Record<string, StoredStatus> = {};
@@ -201,16 +201,12 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
       setStatusMap(defaults);
 
       try {
-        await fetch('/api/streetlight/status/bulk', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ statuses: defaults }),
-        });
-        showToast('🔄 รีเซ็ตและซิงค์ข้อมูลเริ่มต้นไปยังทุกเครื่องแล้ว');
-        setServerConnected(true);
+        await bulkSetTransformerSurveyStatuses(defaults);
+        showToast('🔄 รีเซ็ตและซิงค์ข้อมูลเริ่มต้นไปยังมือถือทุกเครื่องแล้ว');
+        setCloudConnected(true);
         setLastSyncTime(new Date());
       } catch (e) {
-        showToast('🔄 รีเซ็ตในเครื่องแล้ว (รอการเชื่อมต่อเซิร์ฟเวอร์)');
+        showToast('🔄 รีเซ็ตในเครื่องเรียบร้อยแล้ว');
       }
     }
   };
@@ -462,8 +458,8 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
               </p>
               <div className="flex items-center gap-2 mt-1">
                 <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
-                  <span className={`w-1.5 h-1.5 rounded-full ${serverConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                  {serverConnected ? 'ซิงค์เซิร์ฟเวอร์กลาง (อัปเดตทุกเครื่อง)' : 'โหมดออฟไลน์ (บันทึกในเครื่อง)'}
+                  <span className={`w-1.5 h-1.5 rounded-full ${cloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                  {cloudConnected ? 'Cloud Sync (Real-time ทุกเครื่อง)' : 'โหมดออฟไลน์ (กำลังรอสัญญาณ)'}
                 </span>
                 {lastSyncTime && (
                   <span className="text-[10px] text-slate-400 font-mono">
@@ -476,9 +472,9 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
 
           <div className="flex items-center gap-1.5 shrink-0">
             <button
-              onClick={() => fetchCentralStatuses(false)}
+              onClick={handleManualSync}
               disabled={isSyncing}
-              title="ดึงข้อมูลสถานะล่าสุดจากเซิร์ฟเวอร์ส่วนกลาง"
+              title="ตรวจสอบการเชื่อมต่อและดึงข้อมูลล่าสุดจาก Cloud"
               className="px-2.5 py-1.5 text-xs font-bold text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
