@@ -23,7 +23,10 @@ import {
   FileText,
   Clock3,
   Printer,
-  FileSpreadsheet
+  FileSpreadsheet,
+  RefreshCw,
+  Cloud,
+  Database
 } from 'lucide-react';
 import { RecloserLog, PresetRecloser } from '../types';
 import { RecloserExportModal } from './RecloserExportModal';
@@ -73,14 +76,22 @@ export const formatThaiDateFull = (dateStr: string): string => {
 
 interface RecloserTabProps {
   recloserLogs: RecloserLog[];
-  onSaveLog: (log: RecloserLog) => void;
-  onDeleteLog: (id: string) => void;
+  onSaveLog: (log: RecloserLog) => void | Promise<void>;
+  onDeleteLog: (id: string) => void | Promise<void>;
+  isSyncing?: boolean;
+  lastSyncTime?: Date | null;
+  cloudConnected?: boolean;
+  onRefresh?: () => void;
 }
 
 export const RecloserTab: React.FC<RecloserTabProps> = ({
   recloserLogs,
   onSaveLog,
-  onDeleteLog
+  onDeleteLog,
+  isSyncing = false,
+  lastSyncTime = null,
+  cloudConnected = true,
+  onRefresh
 }) => {
   const [viewMode, setViewMode] = useState<'form' | 'history'>('form');
   const [selectedPresetId, setSelectedPresetId] = useState<string>(PRESET_RECLOSERS[0].id);
@@ -385,6 +396,41 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
           </div>
         </div>
 
+        {/* CLOUD FIRESTORE SYNC STATUS (ซิงค์ตอนเริ่ม/บันทึก) */}
+        <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-2 px-3 flex items-center justify-between text-xs shadow-inner">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${cloudConnected ? 'bg-emerald-400' : 'bg-rose-400'} opacity-75`}></span>
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${cloudConnected ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+            </span>
+            <div className="flex items-center gap-1.5 text-[11px] truncate">
+              <span className="font-bold text-slate-200 shrink-0 flex items-center gap-1">
+                <Cloud className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>Cloud Sync:</span>
+              </span>
+              <span className="text-slate-400 truncate">
+                {isSyncing
+                  ? 'กำลังซิงค์ข้อมูลกับคลาวด์...'
+                  : lastSyncTime
+                    ? `ซิงค์ล่าสุด ${lastSyncTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.`
+                    : 'ซิงค์เมื่อเริ่มแอปและตอนบันทึก'}
+              </span>
+            </div>
+          </div>
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={isSyncing}
+              className="flex items-center gap-1 text-[11px] font-bold text-amber-400 hover:text-amber-300 bg-slate-900 hover:bg-slate-800 border border-slate-800 px-2 py-1 rounded-xl transition-all disabled:opacity-50 cursor-pointer active:scale-95 shrink-0 ml-1.5 shadow-sm"
+              title="ดึงข้อมูลล่าสุดจาก Cloud Firestore"
+            >
+              <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin text-amber-300' : ''}`} />
+              <span>{isSyncing ? 'ซิงค์...' : 'รีเฟรช'}</span>
+            </button>
+          )}
+        </div>
+
         {/* TOP SEGMENT SWITCHER: [📝 บันทึกค่าใหม่] vs [📜 ดูย้อนหลังตามวันที่] */}
         <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-1.5 rounded-2xl border border-slate-800 shadow-inner">
           <button
@@ -425,7 +471,7 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
         <div className="bg-emerald-950 border border-emerald-500/60 text-emerald-200 text-xs font-bold p-3 rounded-2xl flex items-center justify-between shadow-xl animate-fadeIn">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>บันทึกค่าสำเร็จเรียบร้อยแล้ว! ⚡</span>
+            <span>บันทึกและซิงค์ข้อมูล Recloser ขึ้น Cloud สำเร็จ! ⚡</span>
           </div>
           <button
             onClick={() => {

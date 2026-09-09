@@ -3,13 +3,17 @@ import {
   getFirestore,
   doc,
   setDoc,
+  deleteDoc,
   collection,
   onSnapshot,
   getDocs,
   writeBatch,
-  getDocFromServer
+  getDocFromServer,
+  query,
+  orderBy
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { RecloserLog } from '../types';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
@@ -26,6 +30,7 @@ export interface SurveyStatusRecord {
 }
 
 const COLLECTION_NAME = 'streetlight_surveys';
+const RECLOSER_COLLECTION = 'recloser_logs';
 
 /**
  * Real-time listener for all streetlight surveys.
@@ -133,3 +138,71 @@ export async function testFirestoreConnection(): Promise<boolean> {
     return true;
   }
 }
+
+/**
+ * Fetch all Recloser logs from Firestore Cloud Database.
+ * Called on application startup / opening tab without keeping a heavy continuous stream.
+ */
+export async function fetchRecloserLogsFromFirestore(): Promise<RecloserLog[]> {
+  try {
+    const colRef = collection(db, RECLOSER_COLLECTION);
+    const q = query(colRef, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+    const logs: RecloserLog[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data() as RecloserLog;
+      if (data && data.id && data.recloserId) {
+        logs.push(data);
+      }
+    });
+    return logs;
+  } catch (err) {
+    console.warn('[Firebase] Error fetching recloser logs from Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Save a new or updated Recloser log to Firestore Cloud Database.
+ * Triggered on user record action.
+ */
+export async function saveRecloserLogToFirestore(log: RecloserLog): Promise<void> {
+  try {
+    const docRef = doc(db, RECLOSER_COLLECTION, log.id);
+    await setDoc(docRef, log, { merge: true });
+  } catch (err) {
+    console.error('[Firebase] Error saving recloser log to Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Delete a Recloser log from Firestore Cloud Database.
+ */
+export async function deleteRecloserLogFromFirestore(logId: string): Promise<void> {
+  try {
+    const docRef = doc(db, RECLOSER_COLLECTION, logId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.error('[Firebase] Error deleting recloser log from Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Seeds demo or local recloser logs to Firestore if Cloud is empty.
+ */
+export async function seedInitialRecloserLogsToFirestore(initialLogs: RecloserLog[]): Promise<void> {
+  if (!initialLogs || initialLogs.length === 0) return;
+  try {
+    const batch = writeBatch(db);
+    for (const log of initialLogs) {
+      const docRef = doc(db, RECLOSER_COLLECTION, log.id);
+      batch.set(docRef, log, { merge: true });
+    }
+    await batch.commit();
+  } catch (err) {
+    console.warn('[Firebase] Error seeding initial recloser logs:', err);
+  }
+}
+

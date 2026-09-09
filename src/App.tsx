@@ -6,6 +6,12 @@ import { StreetlightTab } from './components/StreetlightTab';
 import { RecloserTab } from './components/RecloserTab';
 import { BottomNavBar } from './components/BottomNavBar';
 import { ActiveTab, RecloserLog } from './types';
+import {
+  fetchRecloserLogsFromFirestore,
+  saveRecloserLogToFirestore,
+  deleteRecloserLogFromFirestore,
+  seedInitialRecloserLogsToFirestore
+} from './lib/firebase';
 import { 
   User, 
   Home, 
@@ -1463,9 +1469,54 @@ export default function App() {
     ];
   });
 
-  const handleSaveRecloserLog = useCallback((newLog: RecloserLog) => {
+  const [isRecloserSyncing, setIsRecloserSyncing] = useState<boolean>(false);
+  const [recloserLastSync, setRecloserLastSync] = useState<Date | null>(null);
+  const [recloserCloudConnected, setRecloserCloudConnected] = useState<boolean>(true);
+
+  // Sync Recloser logs from Firestore on app startup
+  const syncRecloserLogsFromCloud = useCallback(async (isInitial = false) => {
+    setIsRecloserSyncing(true);
+    try {
+      const cloudLogs = await fetchRecloserLogsFromFirestore();
+      if (cloudLogs && cloudLogs.length > 0) {
+        setRecloserLogs(cloudLogs);
+        setRecloserLastSync(new Date());
+        setRecloserCloudConnected(true);
+        try {
+          localStorage.setItem('pea_recloser_logs', JSON.stringify(cloudLogs));
+        } catch (e) {
+          console.warn(e);
+        }
+      } else if (isInitial) {
+        // If Cloud is empty on initial load, seed existing local logs
+        setRecloserLogs((curr) => {
+          if (curr && curr.length > 0) {
+            seedInitialRecloserLogsToFirestore(curr).catch(console.warn);
+          }
+          return curr;
+        });
+        setRecloserLastSync(new Date());
+        setRecloserCloudConnected(true);
+      }
+    } catch (err) {
+      console.warn('[Recloser] Could not sync with Firestore:', err);
+      setRecloserCloudConnected(false);
+    } finally {
+      setIsRecloserSyncing(false);
+    }
+  }, []);
+
+  // Sync once when the app starts
+  useEffect(() => {
+    syncRecloserLogsFromCloud(true);
+  }, [syncRecloserLogsFromCloud]);
+
+  // Save Recloser: updates local state + Cloud Firestore immediately, then fetches latest
+  const handleSaveRecloserLog = useCallback(async (newLog: RecloserLog) => {
+    // 1. Optimistic update
     setRecloserLogs((prev) => {
-      const updated = [newLog, ...prev];
+      const filtered = prev.filter((item) => item.id !== newLog.id);
+      const updated = [newLog, ...filtered];
       try {
         localStorage.setItem('pea_recloser_logs', JSON.stringify(updated));
       } catch (err) {
@@ -1473,9 +1524,32 @@ export default function App() {
       }
       return updated;
     });
+
+    // 2. Save to Cloud Firestore and re-fetch latest list
+    setIsRecloserSyncing(true);
+    try {
+      await saveRecloserLogToFirestore(newLog);
+      const freshLogs = await fetchRecloserLogsFromFirestore();
+      if (freshLogs && freshLogs.length > 0) {
+        setRecloserLogs(freshLogs);
+        try {
+          localStorage.setItem('pea_recloser_logs', JSON.stringify(freshLogs));
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+      setRecloserLastSync(new Date());
+      setRecloserCloudConnected(true);
+    } catch (err) {
+      console.error('[Recloser] Error saving to Cloud Firestore:', err);
+      setRecloserCloudConnected(false);
+    } finally {
+      setIsRecloserSyncing(false);
+    }
   }, []);
 
-  const handleDeleteRecloserLog = useCallback((id: string) => {
+  // Delete Recloser: updates local state + Cloud Firestore, then refreshes
+  const handleDeleteRecloserLog = useCallback(async (id: string) => {
     setRecloserLogs((prev) => {
       const updated = prev.filter((item) => item.id !== id);
       try {
@@ -1485,6 +1559,25 @@ export default function App() {
       }
       return updated;
     });
+
+    setIsRecloserSyncing(true);
+    try {
+      await deleteRecloserLogFromFirestore(id);
+      const freshLogs = await fetchRecloserLogsFromFirestore();
+      setRecloserLogs(freshLogs);
+      try {
+        localStorage.setItem('pea_recloser_logs', JSON.stringify(freshLogs));
+      } catch (e) {
+        console.warn(e);
+      }
+      setRecloserLastSync(new Date());
+      setRecloserCloudConnected(true);
+    } catch (err) {
+      console.error('[Recloser] Error deleting from Cloud Firestore:', err);
+      setRecloserCloudConnected(false);
+    } finally {
+      setIsRecloserSyncing(false);
+    }
   }, []);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -2171,6 +2264,10 @@ export default function App() {
           recloserLogs={recloserLogs}
           onSaveLog={handleSaveRecloserLog}
           onDeleteLog={handleDeleteRecloserLog}
+          isSyncing={isRecloserSyncing}
+          lastSyncTime={recloserLastSync}
+          cloudConnected={recloserCloudConnected}
+          onRefresh={() => syncRecloserLogsFromCloud(false)}
         />
       )}
 
