@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Lightbulb,
   CheckCircle2,
@@ -19,7 +19,11 @@ import {
   ChevronRight,
   ChevronLeft,
   ChevronDown,
-  TrendingUp
+  TrendingUp,
+  RefreshCw,
+  Cloud,
+  Wifi,
+  CheckCheck
 } from 'lucide-react';
 import { STREETLIGHT_TRANSFORMERS, STREETLIGHT_VILLAGES, StreetlightTransformer } from '../data/streetlightSurveyData';
 
@@ -56,7 +60,67 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     return defaults;
   });
 
-  // Save to localStorage when statusMap changes
+  // Central Cloud/Server Sync State
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [serverConnected, setServerConnected] = useState<boolean>(true);
+
+  // Fetch latest statuses from Central Server API
+  const fetchCentralStatuses = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsSyncing(true);
+    try {
+      const res = await fetch('/api/streetlight/status');
+      if (!res.ok) throw new Error('API request failed');
+      const data = await res.json();
+      if (data.success && data.statuses) {
+        setServerConnected(true);
+        setLastSyncTime(new Date());
+
+        setStatusMap((prev) => {
+          const serverStatuses: Record<string, StoredStatus> = data.statuses;
+          const serverKeys = Object.keys(serverStatuses);
+
+          // If server database is completely empty on first launch, initialize server with current local data
+          if (serverKeys.length === 0 && Object.keys(prev).length > 0) {
+            fetch('/api/streetlight/status/bulk', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ statuses: prev }),
+            }).catch(() => {});
+            return prev;
+          }
+
+          const merged = { ...prev };
+          for (const [peano, serverItem] of Object.entries(serverStatuses)) {
+            // Adopt server value if newer or missing locally
+            const localItem = merged[peano];
+            if (!localItem || !localItem.updatedAt || (serverItem.updatedAt && serverItem.updatedAt >= localItem.updatedAt)) {
+              merged[peano] = serverItem;
+            }
+          }
+          return merged;
+        });
+      }
+    } catch (err) {
+      // Server may be starting or offline, use local data gracefully
+      setServerConnected(false);
+    } finally {
+      if (!isSilent) setIsSyncing(false);
+    }
+  }, []);
+
+  // Sync on mount and poll every 8 seconds so other devices' changes appear automatically
+  useEffect(() => {
+    fetchCentralStatuses(false);
+
+    const interval = setInterval(() => {
+      fetchCentralStatuses(true);
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [fetchCentralStatuses]);
+
+  // Save to localStorage as offline cache whenever statusMap changes
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(statusMap));
@@ -83,38 +147,71 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Toggle status handler
-  const handleToggleStatus = (peano: string) => {
+  // Toggle status handler with Central Server sync
+  const handleToggleStatus = async (peano: string) => {
     const current = statusMap[peano]?.status || 'ยังไม่สำรวจ';
     const nextStatus = current === 'สำรวจแล้ว' ? 'ยังไม่สำรวจ' : 'สำรวจแล้ว';
+    const now = Date.now();
 
+    // 1. Optimistic instant local update
     setStatusMap((prev) => ({
       ...prev,
       [peano]: {
         status: nextStatus,
-        updatedAt: Date.now()
+        updatedAt: now
       }
     }));
 
     showToast(
       nextStatus === 'สำรวจแล้ว'
-        ? `✅ บันทึกหม้อแปลง ${peano} เป็น "สำรวจแล้ว"`
-        : `⏳ ปรับหม้อแปลง ${peano} เป็น "ยังไม่สำรวจ"`
+        ? `✅ บันทึกหม้อแปลง ${peano} เป็น "สำรวจแล้ว" (ซิงค์ทุกเครื่อง)`
+        : `⏳ ปรับหม้อแปลง ${peano} เป็น "ยังไม่สำรวจ" (ซิงค์ทุกเครื่อง)`
     );
+
+    // 2. Transmit to central server so all mobile devices update
+    try {
+      const res = await fetch('/api/streetlight/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peano, status: nextStatus, updatedAt: now }),
+      });
+      if (res.ok) {
+        setServerConnected(true);
+        setLastSyncTime(new Date());
+      } else {
+        setServerConnected(false);
+      }
+    } catch (err) {
+      console.warn('Central sync queue error:', err);
+      setServerConnected(false);
+    }
   };
 
-  // Reset to original status from CSV file
-  const handleResetToDefault = () => {
-    if (window.confirm('ต้องการรีเซ็ตสถานะการสำรวจกลับเป็นค่าเริ่มต้นตามไฟล์ระบบหรือไม่?')) {
+  // Reset to original status from CSV file with central broadcast
+  const handleResetToDefault = async () => {
+    if (window.confirm('ต้องการรีเซ็ตสถานะการสำรวจทั้งหมดกลับเป็นค่าเริ่มต้นตามไฟล์ระบบ (ทุกเครื่องจะถูกปรับเป็นค่าเริ่มต้นด้วย) หรือไม่?')) {
       const defaults: Record<string, StoredStatus> = {};
+      const now = Date.now();
       STREETLIGHT_TRANSFORMERS.forEach((item) => {
         defaults[item.peano] = {
           status: item.initialSurveyStatus,
-          updatedAt: Date.now()
+          updatedAt: now
         };
       });
       setStatusMap(defaults);
-      showToast('🔄 รีเซ็ตสถานะกลับเป็นค่าเริ่มต้นแล้ว');
+
+      try {
+        await fetch('/api/streetlight/status/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ statuses: defaults }),
+        });
+        showToast('🔄 รีเซ็ตและซิงค์ข้อมูลเริ่มต้นไปยังทุกเครื่องแล้ว');
+        setServerConnected(true);
+        setLastSyncTime(new Date());
+      } catch (e) {
+        showToast('🔄 รีเซ็ตในเครื่องแล้ว (รอการเชื่อมต่อเซิร์ฟเวอร์)');
+      }
     }
   };
 
@@ -363,16 +460,41 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
               <p className="text-xs text-slate-300 font-medium mt-0.5">
                 แยกตามหมู่บ้าน • อ.ท่าคันโท
               </p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
+                  <span className={`w-1.5 h-1.5 rounded-full ${serverConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                  {serverConnected ? 'ซิงค์เซิร์ฟเวอร์กลาง (อัปเดตทุกเครื่อง)' : 'โหมดออฟไลน์ (บันทึกในเครื่อง)'}
+                </span>
+                {lastSyncTime && (
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    • {lastSyncTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
-          <button
-            onClick={handleResetToDefault}
-            title="รีเซ็ตสถานะเป็นค่าเริ่มต้น"
-            className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition-colors cursor-pointer shrink-0"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => fetchCentralStatuses(false)}
+              disabled={isSyncing}
+              title="ดึงข้อมูลสถานะล่าสุดจากเซิร์ฟเวอร์ส่วนกลาง"
+              className="px-2.5 py-1.5 text-xs font-bold text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span className="text-[11px]">
+                {isSyncing ? 'ซิงค์...' : 'รีเฟรช'}
+              </span>
+            </button>
+
+            <button
+              onClick={handleResetToDefault}
+              title="รีเซ็ตสถานะเป็นค่าเริ่มต้น"
+              className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 transition-colors cursor-pointer shrink-0"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {/* PROGRESS BAR & STATS GRID */}

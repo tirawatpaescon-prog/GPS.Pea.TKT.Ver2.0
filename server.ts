@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
@@ -161,6 +162,94 @@ async function startServer() {
       intent: meter || ca || address ? "search" : "greeting"
     };
   }
+
+  // --- Central Storage for Streetlight Transformer Survey ---
+  const DATA_DIR = path.join(process.cwd(), "data");
+  const SURVEY_FILE = path.join(DATA_DIR, "streetlight_status.json");
+
+  function ensureDataDir() {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  }
+
+  function loadSurveyStatuses(): Record<string, { status: string; updatedAt: number }> {
+    ensureDataDir();
+    if (!fs.existsSync(SURVEY_FILE)) {
+      return {};
+    }
+    try {
+      const raw = fs.readFileSync(SURVEY_FILE, "utf-8");
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error("Error reading survey status file:", err);
+      return {};
+    }
+  }
+
+  function saveSurveyStatuses(data: Record<string, { status: string; updatedAt: number }>) {
+    ensureDataDir();
+    try {
+      fs.writeFileSync(SURVEY_FILE, JSON.stringify(data, null, 2), "utf-8");
+    } catch (err) {
+      console.error("Error writing survey status file:", err);
+    }
+  }
+
+  // API Route: GET all transformer survey statuses
+  app.get("/api/streetlight/status", (req, res) => {
+    try {
+      const statuses = loadSurveyStatuses();
+      res.json({ success: true, statuses, timestamp: Date.now() });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // API Route: POST update single transformer status
+  app.post("/api/streetlight/status", (req, res) => {
+    try {
+      const { peano, status, updatedAt } = req.body;
+      if (!peano || !status) {
+        return res.status(400).json({ error: "Missing peano or status" });
+      }
+      const statuses = loadSurveyStatuses();
+      statuses[peano] = {
+        status: status === "สำรวจแล้ว" ? "สำรวจแล้ว" : "ยังไม่สำรวจ",
+        updatedAt: typeof updatedAt === "number" ? updatedAt : Date.now(),
+      };
+      saveSurveyStatuses(statuses);
+      res.json({ success: true, peano, item: statuses[peano] });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // API Route: POST bulk update statuses
+  app.post("/api/streetlight/status/bulk", (req, res) => {
+    try {
+      const { statuses } = req.body;
+      if (!statuses || typeof statuses !== "object") {
+        return res.status(400).json({ error: "Invalid statuses payload" });
+      }
+      const current = loadSurveyStatuses();
+      const merged = { ...current, ...statuses };
+      saveSurveyStatuses(merged);
+      res.json({ success: true, count: Object.keys(statuses).length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // API Route: POST reset all statuses
+  app.post("/api/streetlight/status/reset", (req, res) => {
+    try {
+      saveSurveyStatuses({});
+      res.json({ success: true, message: "Reset all survey statuses to default" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
