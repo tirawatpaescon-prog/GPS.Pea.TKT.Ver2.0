@@ -12,7 +12,7 @@
         "status": {
           "type": "string",
           "description": "Survey status",
-          "enum": ["สำรวจแล้ว", "ยังไม่สำรวจ"]
+          "enum": ["สำรวจแล้ว", "กำลังดำเนินการ", "ยังไม่สำรวจ"]
         },
         "updatedAt": {
           "type": "number",

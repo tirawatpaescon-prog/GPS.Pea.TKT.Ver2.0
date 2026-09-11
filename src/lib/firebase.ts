@@ -13,7 +13,7 @@ import {
   orderBy
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { RecloserLog } from '../types';
+import { RecloserLog, StreetlightSurveyStatusType } from '../types';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
@@ -24,7 +24,7 @@ export const db =
 
 export interface SurveyStatusRecord {
   peano: string;
-  status: 'สำรวจแล้ว' | 'ยังไม่สำรวจ';
+  status: StreetlightSurveyStatusType;
   updatedAt: number;
   village?: string;
 }
@@ -37,7 +37,7 @@ const RECLOSER_COLLECTION = 'recloser_logs';
  * Automatically receives updates whenever ANY mobile device makes a change.
  */
 export function subscribeToStreetlightSurveys(
-  onUpdate: (data: Record<string, { status: 'สำรวจแล้ว' | 'ยังไม่สำรวจ'; updatedAt: number }>) => void,
+  onUpdate: (data: Record<string, { status: StreetlightSurveyStatusType; updatedAt: number }>) => void,
   onError?: (err: any) => void
 ): () => void {
   const colRef = collection(db, COLLECTION_NAME);
@@ -45,12 +45,16 @@ export function subscribeToStreetlightSurveys(
   const unsubscribe = onSnapshot(
     colRef,
     (snapshot) => {
-      const results: Record<string, { status: 'สำรวจแล้ว' | 'ยังไม่สำรวจ'; updatedAt: number }> = {};
+      const results: Record<string, { status: StreetlightSurveyStatusType; updatedAt: number }> = {};
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         if (data && data.peano && data.status) {
+          const validStatus: StreetlightSurveyStatusType =
+            data.status === 'สำรวจแล้ว' || data.status === 'กำลังดำเนินการ'
+              ? data.status
+              : 'ยังไม่สำรวจ';
           results[data.peano] = {
-            status: data.status === 'สำรวจแล้ว' ? 'สำรวจแล้ว' : 'ยังไม่สำรวจ',
+            status: validStatus,
             updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : Date.now()
           };
         }
@@ -72,7 +76,7 @@ export function subscribeToStreetlightSurveys(
  */
 export async function setTransformerSurveyStatus(
   peano: string,
-  status: 'สำรวจแล้ว' | 'ยังไม่สำรวจ',
+  status: StreetlightSurveyStatusType,
   village?: string
 ): Promise<void> {
   const docRef = doc(db, COLLECTION_NAME, peano);
@@ -93,7 +97,7 @@ export async function setTransformerSurveyStatus(
  * Batch updates or initializes multiple survey records in Firestore.
  */
 export async function bulkSetTransformerSurveyStatuses(
-  statuses: Record<string, { status: 'สำรวจแล้ว' | 'ยังไม่สำรวจ'; updatedAt: number; village?: string }>
+  statuses: Record<string, { status: StreetlightSurveyStatusType; updatedAt: number; village?: string }>
 ): Promise<void> {
   const entries = Object.entries(statuses);
   if (entries.length === 0) return;
@@ -185,6 +189,24 @@ export async function deleteRecloserLogFromFirestore(logId: string): Promise<voi
     await deleteDoc(docRef);
   } catch (err) {
     console.error('[Firebase] Error deleting recloser log from Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Delete multiple Recloser logs from Firestore Cloud Database in a single batch.
+ */
+export async function deleteBatchRecloserLogsFromFirestore(logIds: string[]): Promise<void> {
+  if (!logIds || logIds.length === 0) return;
+  try {
+    const batch = writeBatch(db);
+    for (const id of logIds) {
+      const docRef = doc(db, RECLOSER_COLLECTION, id);
+      batch.delete(docRef);
+    }
+    await batch.commit();
+  } catch (err) {
+    console.error('[Firebase] Error batch deleting recloser logs from Firestore:', err);
     throw err;
   }
 }

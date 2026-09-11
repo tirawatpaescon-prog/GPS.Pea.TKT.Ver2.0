@@ -10,6 +10,7 @@ import {
   fetchRecloserLogsFromFirestore,
   saveRecloserLogToFirestore,
   deleteRecloserLogFromFirestore,
+  deleteBatchRecloserLogsFromFirestore,
   seedInitialRecloserLogsToFirestore
 } from './lib/firebase';
 import { 
@@ -35,7 +36,8 @@ import {
   Check,
   ExternalLink,
   Filter,
-  Zap
+  Zap,
+  Lightbulb
 } from 'lucide-react';
 
 import peaBotMascotImg from './assets/images/pea_bot_mascot_1786454271309.jpg';
@@ -501,9 +503,10 @@ const HeaderSection = React.memo(({
               </span>
             </div>
             <p className="text-[10px] font-bold text-slate-400 truncate">
-              {activeTab === 'home' && 'ระบบช่วยงานภาคสนาม PEA.TKT'}
-              {activeTab === 'search' && `ค้นหาพิกัดผู้ใช้ไฟ (${totalRecordsCount ? totalRecordsCount.toLocaleString() : 0} รายการ)`}
-              {activeTab === 'recloser' && 'บันทึกจดหน่วย Recloser (7 จุดหลัก)'}
+              {activeTab === 'home' && 'ระบบงานภาคสนาม PEA.TKT'}
+              {activeTab === 'search' && 'ค้นหาพิกัดผู้ใช้ไฟ'}
+              {activeTab === 'streetlight' && 'สำรวจโคมไฟส่องสว่าง (106 เครื่อง)'}
+              {activeTab === 'recloser' && 'บันทึกค่า Recloser (7 จุดหลัก)'}
             </p>
           </div>
         </div>
@@ -547,45 +550,58 @@ const HeaderSection = React.memo(({
         </div>
       </div>
 
-      {/* TOP TAB SWITCHER PILLS */}
-      <div className="grid grid-cols-3 gap-1 bg-slate-900/95 p-1 rounded-2xl border border-slate-800 text-xs font-bold shadow-inner">
+      {/* TOP TAB SWITCHER PILLS (4 TABS) */}
+      <div className="grid grid-cols-4 gap-1 bg-slate-900/95 p-1 rounded-2xl border border-slate-800 text-xs font-bold shadow-inner">
         <button
           type="button"
           onClick={() => onTabChange('home')}
-          className={`flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+          className={`flex items-center justify-center gap-1 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
             activeTab === 'home'
               ? 'bg-purple-600 text-white font-black shadow-md shadow-purple-600/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <Home className="w-3.5 h-3.5" />
-          <span>หน้าแรก</span>
+          <Home className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">หน้าแรก</span>
         </button>
 
         <button
           type="button"
           onClick={() => onTabChange('search')}
-          className={`flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+          className={`flex items-center justify-center gap-1 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
             activeTab === 'search'
               ? 'bg-cyan-500 text-slate-950 font-black shadow-md shadow-cyan-500/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <Search className="w-3.5 h-3.5" />
-          <span>1. ค้นหาผู้ใช้ไฟ</span>
+          <Search className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">ค้นหา</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onTabChange('streetlight')}
+          className={`flex items-center justify-center gap-1 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+            activeTab === 'streetlight'
+              ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Lightbulb className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">โคมไฟ</span>
         </button>
 
         <button
           type="button"
           onClick={() => onTabChange('recloser')}
-          className={`flex items-center justify-center gap-1.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+          className={`flex items-center justify-center gap-1 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
             activeTab === 'recloser'
-              ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/30'
+              ? 'bg-orange-500 text-slate-950 font-black shadow-md shadow-orange-500/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
-          <Zap className="w-3.5 h-3.5" />
-          <span>2. จด Recloser</span>
+          <Zap className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Recloser</span>
         </button>
       </div>
     </header>
@@ -1580,6 +1596,40 @@ export default function App() {
     }
   }, []);
 
+  // Batch Delete Recloser: deletes multiple logs (e.g. all logs for a date)
+  const handleDeleteBatchRecloserLogs = useCallback(async (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    const idSet = new Set(ids);
+    setRecloserLogs((prev) => {
+      const updated = prev.filter((item) => !idSet.has(item.id));
+      try {
+        localStorage.setItem('pea_recloser_logs', JSON.stringify(updated));
+      } catch (err) {
+        console.error(err);
+      }
+      return updated;
+    });
+
+    setIsRecloserSyncing(true);
+    try {
+      await deleteBatchRecloserLogsFromFirestore(ids);
+      const freshLogs = await fetchRecloserLogsFromFirestore();
+      setRecloserLogs(freshLogs);
+      try {
+        localStorage.setItem('pea_recloser_logs', JSON.stringify(freshLogs));
+      } catch (e) {
+        console.warn(e);
+      }
+      setRecloserLastSync(new Date());
+      setRecloserCloudConnected(true);
+    } catch (err) {
+      console.error('[Recloser] Error batch deleting from Cloud Firestore:', err);
+      setRecloserCloudConnected(false);
+    } finally {
+      setIsRecloserSyncing(false);
+    }
+  }, []);
+
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome-msg',
@@ -2264,6 +2314,7 @@ export default function App() {
           recloserLogs={recloserLogs}
           onSaveLog={handleSaveRecloserLog}
           onDeleteLog={handleDeleteRecloserLog}
+          onDeleteBatchLogs={handleDeleteBatchRecloserLogs}
           isSyncing={isRecloserSyncing}
           lastSyncTime={recloserLastSync}
           cloudConnected={recloserCloudConnected}

@@ -26,6 +26,7 @@ import {
   CheckCheck
 } from 'lucide-react';
 import { STREETLIGHT_TRANSFORMERS, STREETLIGHT_VILLAGES, StreetlightTransformer } from '../data/streetlightSurveyData';
+import { StreetlightSurveyStatusType } from '../types';
 import {
   subscribeToStreetlightSurveys,
   setTransformerSurveyStatus,
@@ -36,7 +37,7 @@ import {
 const STORAGE_KEY = 'pea_streetlight_survey_statuses_v1';
 
 interface StoredStatus {
-  status: 'สำรวจแล้ว' | 'ยังไม่สำรวจ';
+  status: StreetlightSurveyStatusType;
   updatedAt: number;
 }
 
@@ -123,8 +124,8 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
   // 2. Active village tab state ('all' or village name)
   const [activeVillage, setActiveVillage] = useState<string>(initialVillage || 'all');
 
-  // 3. Status filter: 'all' | 'pending' | 'completed'
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'completed'>('all');
+  // 3. Status filter: 'all' | 'pending' | 'in_progress' | 'completed'
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all');
 
   // 4. Search text
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -154,10 +155,8 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     }
   };
 
-  // Toggle status handler with Real-time Cloud Sync
-  const handleToggleStatus = async (peano: string) => {
-    const current = statusMap[peano]?.status || 'ยังไม่สำรวจ';
-    const nextStatus = current === 'สำรวจแล้ว' ? 'ยังไม่สำรวจ' : 'สำรวจแล้ว';
+  // Set status handler (ยังไม่สำรวจ / กำลังดำเนินการ / สำรวจแล้ว) with Real-time Cloud Sync
+  const handleSetStatus = async (peano: string, newStatus: StreetlightSurveyStatusType) => {
     const now = Date.now();
     const item = STREETLIGHT_TRANSFORMERS.find((t) => t.peano === peano);
 
@@ -165,20 +164,23 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     setStatusMap((prev) => ({
       ...prev,
       [peano]: {
-        status: nextStatus,
+        status: newStatus,
         updatedAt: now
       }
     }));
 
-    showToast(
-      nextStatus === 'สำรวจแล้ว'
+    const label =
+      newStatus === 'สำรวจแล้ว'
         ? `✅ บันทึกหม้อแปลง ${peano} เป็น "สำรวจแล้ว" (ซิงค์ทุกเครื่อง)`
-        : `⏳ ปรับหม้อแปลง ${peano} เป็น "ยังไม่สำรวจ" (ซิงค์ทุกเครื่อง)`
-    );
+        : newStatus === 'กำลังดำเนินการ'
+        ? `⚡ บันทึกหม้อแปลง ${peano} เป็น "กำลังดำเนินการ" (ซิงค์ทุกเครื่อง)`
+        : `⏳ ปรับหม้อแปลง ${peano} เป็น "ยังไม่สำรวจ" (ซิงค์ทุกเครื่อง)`;
+
+    showToast(label);
 
     // 2. Real-time broadcast to all mobile devices via Cloud Firestore
     try {
-      await setTransformerSurveyStatus(peano, nextStatus, item?.village);
+      await setTransformerSurveyStatus(peano, newStatus, item?.village);
       setCloudConnected(true);
       setLastSyncTime(new Date());
     } catch (err) {
@@ -240,32 +242,48 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
   // Statistics calculation
   const overallStats = useMemo(() => {
     let completed = 0;
+    let inProgress = 0;
+    let pending = 0;
     let totalAffected = 0;
-    const villageCounts: Record<string, { total: number; completed: number; affected: number }> = {};
+    const villageCounts: Record<
+      string,
+      { total: number; completed: number; inProgress: number; pending: number; affected: number }
+    > = {};
 
     STREETLIGHT_VILLAGES.forEach((v) => {
-      villageCounts[v] = { total: 0, completed: 0, affected: 0 };
+      villageCounts[v] = { total: 0, completed: 0, inProgress: 0, pending: 0, affected: 0 };
     });
 
     STREETLIGHT_TRANSFORMERS.forEach((t) => {
-      const isCompleted = (statusMap[t.peano]?.status || t.initialSurveyStatus) === 'สำรวจแล้ว';
-      if (isCompleted) completed++;
+      const currentSt = statusMap[t.peano]?.status || t.initialSurveyStatus;
+      const isCompleted = currentSt === 'สำรวจแล้ว';
+      const isInProgress = currentSt === 'กำลังดำเนินการ';
+
+      if (isCompleted) {
+        completed++;
+      } else if (isInProgress) {
+        inProgress++;
+      } else {
+        pending++;
+      }
       totalAffected += t.affected;
 
       if (villageCounts[t.village]) {
         villageCounts[t.village].total += 1;
         if (isCompleted) villageCounts[t.village].completed += 1;
+        else if (isInProgress) villageCounts[t.village].inProgress += 1;
+        else villageCounts[t.village].pending += 1;
         villageCounts[t.village].affected += t.affected;
       }
     });
 
     const total = STREETLIGHT_TRANSFORMERS.length;
-    const pending = total - completed;
     const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
     return {
       total,
       completed,
+      inProgress,
       pending,
       percent,
       totalAffected,
@@ -278,13 +296,19 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     if (activeVillage === 'all') {
       return overallStats;
     }
-    const c = overallStats.villageCounts[activeVillage] || { total: 0, completed: 0, affected: 0 };
-    const pending = c.total - c.completed;
+    const c = overallStats.villageCounts[activeVillage] || {
+      total: 0,
+      completed: 0,
+      inProgress: 0,
+      pending: 0,
+      affected: 0
+    };
     const percent = c.total > 0 ? Math.round((c.completed / c.total) * 100) : 0;
     return {
       total: c.total,
       completed: c.completed,
-      pending,
+      inProgress: c.inProgress,
+      pending: c.pending,
       percent,
       totalAffected: c.affected
     };
@@ -303,6 +327,9 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
       // 2. Status filter
       const currentStatus = statusMap[item.peano]?.status || item.initialSurveyStatus;
       if (statusFilter === 'completed' && currentStatus !== 'สำรวจแล้ว') {
+        return false;
+      }
+      if (statusFilter === 'in_progress' && currentStatus !== 'กำลังดำเนินการ') {
         return false;
       }
       if (statusFilter === 'pending' && currentStatus !== 'ยังไม่สำรวจ') {
@@ -349,10 +376,12 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     if (activeVillage !== 'all') {
       msg += `🏘️ หมู่บ้าน: ${activeVillage}\n`;
       msg += `📊 ความคืบหน้า: สำรวจแล้ว ${selectedVillageStats.completed}/${selectedVillageStats.total} เครื่อง (${selectedVillageStats.percent}%)\n`;
+      msg += `⚡ กำลังดำเนินการ: ${selectedVillageStats.inProgress} เครื่อง\n`;
       msg += `⏳ คงเหลือยังไม่สำรวจ: ${selectedVillageStats.pending} เครื่อง\n`;
     } else {
       msg += `📊 ภาพรวมทั้งหมด 23 หมู่บ้าน:\n`;
       msg += `✅ สำรวจแล้ว: ${overallStats.completed}/${overallStats.total} เครื่อง (${overallStats.percent}%)\n`;
+      msg += `⚡ กำลังดำเนินการ: ${overallStats.inProgress} เครื่อง\n`;
       msg += `⏳ คงเหลือยังไม่สำรวจ: ${overallStats.pending} เครื่อง\n`;
       msg += `👥 ผู้ใช้ไฟได้รับผลกระทบรวม: ${overallStats.totalAffected.toLocaleString()} ราย\n`;
     }
@@ -360,8 +389,8 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     msg += `\n📝 รายการหม้อแปลง (${filteredTransformers.length} เครื่อง):\n`;
     filteredTransformers.forEach((item, idx) => {
       const st = statusMap[item.peano]?.status || item.initialSurveyStatus;
-      const mark = st === 'สำรวจแล้ว' ? '✅' : '⏳';
-      msg += `${idx + 1}. [${mark}] ${item.peano} (${item.kva} kVA) - ${item.location}\n`;
+      const mark = st === 'สำรวจแล้ว' ? '✅' : st === 'กำลังดำเนินการ' ? '⚡' : '⏳';
+      msg += `${idx + 1}. [${mark} ${st}] ${item.peano} (${item.kva} kVA) - ${item.location}\n`;
     });
 
     navigator.clipboard.writeText(msg);
@@ -454,16 +483,16 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
                 </span>
               </div>
               <p className="text-xs text-slate-300 font-medium mt-0.5">
-                แยกตามหมู่บ้าน • อ.ท่าคันโท
+                กฟส.ท่าคันโท • 23 หมู่บ้าน
               </p>
               <div className="flex items-center gap-2 mt-1">
                 <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium">
                   <span className={`w-1.5 h-1.5 rounded-full ${cloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                  {cloudConnected ? 'Cloud Sync (Real-time ทุกเครื่อง)' : 'โหมดออฟไลน์ (กำลังรอสัญญาณ)'}
+                  {cloudConnected ? 'Cloud Sync' : 'ออฟไลน์'}
                 </span>
                 {lastSyncTime && (
                   <span className="text-[10px] text-slate-400 font-mono">
-                    • {lastSyncTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    • {lastSyncTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.
                   </span>
                 )}
               </div>
@@ -496,14 +525,14 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
         {/* PROGRESS BAR & STATS GRID */}
         <div className="mt-3.5 pt-3 border-t border-slate-800/80">
           <div className="flex items-center justify-between text-xs mb-1.5">
-            <div className="flex items-center gap-1.5 font-bold text-slate-200">
-              <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
-              <span>
-                {activeVillage === 'all' ? 'ความคืบหน้ารวมทุกหมู่บ้าน' : `ความคืบหน้า: ${activeVillage}`}
+            <div className="flex items-center gap-1.5 font-bold text-slate-200 truncate">
+              <TrendingUp className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="truncate">
+                {activeVillage === 'all' ? 'ความคืบหน้ารวม' : activeVillage}
               </span>
             </div>
-            <span className="font-mono font-black text-amber-300 text-xs">
-              {selectedVillageStats.completed}/{selectedVillageStats.total} เครื่อง ({selectedVillageStats.percent}%)
+            <span className="font-mono font-black text-amber-300 text-xs shrink-0 ml-1">
+              {selectedVillageStats.completed}/{selectedVillageStats.total} ({selectedVillageStats.percent}%)
             </span>
           </div>
 
@@ -516,23 +545,29 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
           </div>
 
           {/* Mini Stats Badges */}
-          <div className="grid grid-cols-3 gap-2 mt-3 text-center">
-            <div className="bg-slate-950/80 border border-slate-800/90 rounded-xl py-1.5 px-2">
-              <span className="text-[10px] text-slate-400 block">หม้อแปลงทั้งหมด</span>
+          <div className="grid grid-cols-4 gap-1.5 mt-3 text-center">
+            <div className="bg-slate-950/80 border border-slate-800/90 rounded-xl py-1.5 px-1">
+              <span className="text-[10px] text-slate-400 block truncate">ทั้งหมด</span>
               <span className="text-xs font-mono font-black text-white">
-                {selectedVillageStats.total} <span className="text-[10px] font-normal text-slate-400">เครื่อง</span>
+                {selectedVillageStats.total}
               </span>
             </div>
-            <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl py-1.5 px-2">
-              <span className="text-[10px] text-emerald-400 block">สำรวจแล้ว</span>
+            <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl py-1.5 px-1">
+              <span className="text-[10px] text-emerald-400 block truncate">สำรวจแล้ว</span>
               <span className="text-xs font-mono font-black text-emerald-300">
-                {selectedVillageStats.completed} <span className="text-[10px] font-normal text-emerald-400/80">เครื่อง</span>
+                {selectedVillageStats.completed}
               </span>
             </div>
-            <div className="bg-amber-950/40 border border-amber-500/30 rounded-xl py-1.5 px-2">
-              <span className="text-[10px] text-amber-400 block">ยังไม่สำรวจ</span>
+            <div className="bg-sky-950/40 border border-sky-500/30 rounded-xl py-1.5 px-1">
+              <span className="text-[10px] text-sky-400 block truncate">กำลังทำ</span>
+              <span className="text-xs font-mono font-black text-sky-300">
+                {selectedVillageStats.inProgress}
+              </span>
+            </div>
+            <div className="bg-amber-950/40 border border-amber-500/30 rounded-xl py-1.5 px-1">
+              <span className="text-[10px] text-amber-400 block truncate">ยังไม่ทำ</span>
               <span className="text-xs font-mono font-black text-amber-300">
-                {selectedVillageStats.pending} <span className="text-[10px] font-normal text-amber-400/80">เครื่อง</span>
+                {selectedVillageStats.pending}
               </span>
             </div>
           </div>
@@ -545,27 +580,27 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
             className="flex-1 py-1.5 px-3 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all"
           >
             <Share2 className="w-3.5 h-3.5" />
-            <span>คัดลอกสรุปส่ง LINE</span>
+            <span>ส่งสรุป LINE</span>
           </button>
           <button
             onClick={handleExportCSV}
             className="py-1.5 px-3 bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Export CSV</span>
+            <span>โหลด CSV</span>
           </button>
         </div>
       </div>
 
-      {/* 2. VILLAGE SELECTION DROPDOWN (เลือกหมู่บ้านแบบ Dropdown) */}
+      {/* 2. VILLAGE SELECTION DROPDOWN */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-md">
         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-xs">
           <div className="flex items-center gap-1.5 font-bold text-white">
             <Building2 className="w-4 h-4 text-amber-400" />
-            <span>เลือกหมู่บ้าน (Dropdown):</span>
+            <span>เลือกหมู่บ้าน:</span>
           </div>
           <span className="text-[10px] text-slate-400 font-mono">
-            {activeVillage === 'all' ? 'แสดงทั้งหมด 23 หมู่บ้าน' : `หมู่บ้านที่ ${STREETLIGHT_VILLAGES.indexOf(activeVillage) + 1} จาก 23`}
+            {activeVillage === 'all' ? '23 หมู่บ้าน' : `ที่ ${STREETLIGHT_VILLAGES.indexOf(activeVillage) + 1}/23`}
           </span>
         </div>
 
@@ -591,14 +626,14 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
               className="w-full appearance-none bg-slate-950 text-white font-bold text-xs sm:text-sm py-2.5 pl-3.5 pr-9 rounded-xl border border-slate-800 hover:border-amber-500/50 focus:border-amber-400 focus:outline-none transition-all cursor-pointer truncate shadow-inner"
             >
               <option value="all">
-                🏘️ ทั้งหมดทุกหมู่บ้าน ({overallStats.completed}/{overallStats.total} สำรวจแล้ว)
+                🏘️ ทุกหมู่บ้าน ({overallStats.completed}/{overallStats.total} สำรวจแล้ว)
               </option>
               {STREETLIGHT_VILLAGES.map((v, idx) => {
-                const c = overallStats.villageCounts[v] || { total: 0, completed: 0 };
+                const c = overallStats.villageCounts[v] || { total: 0, completed: 0, inProgress: 0, pending: 0 };
                 const isFinished = c.total > 0 && c.completed === c.total;
                 return (
                   <option key={v} value={v}>
-                    {idx + 1}. {v} ({c.completed}/{c.total} เครื่อง{isFinished ? ' ✓ ครบ' : ''})
+                    {idx + 1}. {v} ({c.completed}/{c.total}{isFinished ? ' ✓' : ''})
                   </option>
                 );
               })}
@@ -624,13 +659,15 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
               <span className={`w-2 h-2 rounded-full shrink-0 ${
                 selectedVillageStats.completed === selectedVillageStats.total && selectedVillageStats.total > 0
                   ? 'bg-emerald-400 ring-2 ring-emerald-400/30'
+                  : selectedVillageStats.inProgress > 0
+                  ? 'bg-sky-400 ring-2 ring-sky-400/30'
                   : 'bg-amber-400 ring-2 ring-amber-400/30'
               }`} />
               <span className="font-bold text-white truncate">
                 {activeVillage}
               </span>
               <span className="text-[11px] text-slate-400 font-mono shrink-0">
-                ({selectedVillageStats.completed}/{selectedVillageStats.total} เครื่อง • {selectedVillageStats.percent}%)
+                ({selectedVillageStats.completed}/{selectedVillageStats.total})
               </span>
             </div>
             <button
@@ -643,7 +680,6 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
           </div>
         )}
       </div>
-
 
       {/* 3. SEARCH & STATUS FILTER ROW */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-2.5 shadow-md flex flex-col gap-2">
@@ -667,45 +703,61 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
           )}
         </div>
 
-        {/* Status Filter Buttons */}
-        <div className="grid grid-cols-3 gap-1.5">
+        {/* Status Filter Buttons (มีแท็บ กำลังดำเนินการ) */}
+        <div className="grid grid-cols-4 gap-1">
           <button
             type="button"
             onClick={() => setStatusFilter('all')}
-            className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 border ${
+            className={`py-1.5 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 border ${
               statusFilter === 'all'
                 ? 'bg-slate-800 text-white border-slate-600'
                 : 'bg-slate-950 text-slate-400 border-slate-800/80 hover:bg-slate-800'
             }`}
           >
-            <span>ทั้งหมด</span>
-            <span className="text-[10px] font-mono text-slate-400">({filteredTransformers.length})</span>
+            <span className="truncate">ทั้งหมด</span>
+            <span className="text-[10px] font-mono text-slate-400">({selectedVillageStats.total})</span>
           </button>
 
           <button
             type="button"
             onClick={() => setStatusFilter('pending')}
-            className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 border ${
+            className={`py-1.5 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 border ${
               statusFilter === 'pending'
                 ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
                 : 'bg-slate-950 text-amber-400/90 border-slate-800/80 hover:bg-amber-950/30'
             }`}
           >
-            <Clock className="w-3.5 h-3.5 shrink-0" />
-            <span>ยังไม่สำรวจ</span>
+            <Clock className="w-3 h-3 shrink-0" />
+            <span className="truncate">ยังไม่สำรวจ</span>
+            <span className="text-[10px] font-mono opacity-80">({selectedVillageStats.pending})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setStatusFilter('in_progress')}
+            className={`py-1.5 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 border ${
+              statusFilter === 'in_progress'
+                ? 'bg-sky-500 text-slate-950 border-sky-400 font-black'
+                : 'bg-slate-950 text-sky-400/90 border-slate-800/80 hover:bg-sky-950/30'
+            }`}
+          >
+            <Zap className="w-3 h-3 shrink-0" />
+            <span className="truncate">กำลังทำ</span>
+            <span className="text-[10px] font-mono opacity-80">({selectedVillageStats.inProgress})</span>
           </button>
 
           <button
             type="button"
             onClick={() => setStatusFilter('completed')}
-            className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 border ${
+            className={`py-1.5 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 border ${
               statusFilter === 'completed'
                 ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black'
                 : 'bg-slate-950 text-emerald-400/90 border-slate-800/80 hover:bg-emerald-950/30'
             }`}
           >
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            <span>สำรวจแล้ว</span>
+            <CheckCircle2 className="w-3 h-3 shrink-0" />
+            <span className="truncate">สำรวจแล้ว</span>
+            <span className="text-[10px] font-mono opacity-80">({selectedVillageStats.completed})</span>
           </button>
         </div>
       </div>
@@ -731,6 +783,7 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
           filteredTransformers.map((item, idx) => {
             const currentStatus = statusMap[item.peano]?.status || item.initialSurveyStatus;
             const isCompleted = currentStatus === 'สำรวจแล้ว';
+            const isInProgress = currentStatus === 'กำลังดำเนินการ';
             const is3Phase = item.phase.includes('3');
 
             return (
@@ -739,6 +792,8 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
                 className={`border rounded-3xl p-3.5 transition-all shadow-md ${
                   isCompleted
                     ? 'bg-slate-900/90 border-emerald-500/40 shadow-emerald-950/20'
+                    : isInProgress
+                    ? 'bg-slate-900/90 border-sky-500/50 shadow-sky-950/20'
                     : 'bg-slate-900/95 border-slate-800 hover:border-amber-500/40'
                 }`}
               >
@@ -800,36 +855,86 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
                   </div>
                 </div>
 
-                {/* ROW 3: STATUS TOGGLE BUTTON (เด่นชัดตามที่ผู้ใช้ร้องขอ) */}
+                {/* ROW 3: STATUS SELECTION */}
                 <div className="pt-2 border-t border-slate-800/80 mb-2.5">
-                  <button
-                    type="button"
-                    onClick={() => handleToggleStatus(item.peano)}
-                    className={`w-full py-2.5 px-3 rounded-2xl font-black text-xs transition-all cursor-pointer flex items-center justify-between shadow-sm active:scale-98 ${
-                      isCompleted
-                        ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 shadow-emerald-500/20'
-                        : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {isCompleted ? (
-                        <CheckCircle2 className="w-4 h-4 fill-slate-950 text-emerald-200" />
-                      ) : (
-                        <Clock className="w-4 h-4 text-amber-400" />
+                  <div className="flex items-center justify-between text-[11px] mb-1.5 font-bold">
+                    <span className="text-slate-400">สถานะ:</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 ${
+                        isCompleted
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : isInProgress
+                          ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      }`}
+                    >
+                      {isCompleted && (
+                        <>
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          <span>สำรวจแล้ว</span>
+                        </>
                       )}
-                      <span>
-                        สถานะ: {isCompleted ? 'สำรวจแล้ว (เสร็จสิ้น)' : 'ยังไม่สำรวจ'}
-                      </span>
-                    </div>
-
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${
-                      isCompleted 
-                        ? 'bg-slate-950/20 text-slate-950' 
-                        : 'bg-amber-500 text-slate-950 font-black'
-                    }`}>
-                      {isCompleted ? 'แตะเพื่อแก้ไข' : 'แตะบันทึกว่าสำรวจแล้ว'}
+                      {isInProgress && (
+                        <>
+                          <Zap className="w-3 h-3 text-sky-400 animate-pulse" />
+                          <span>กำลังทำ</span>
+                        </>
+                      )}
+                      {!isCompleted && !isInProgress && (
+                        <>
+                          <Clock className="w-3 h-3 text-amber-400" />
+                          <span>ยังไม่สำรวจ</span>
+                        </>
+                      )}
                     </span>
-                  </button>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-2xl border border-slate-800 shadow-inner">
+                    {/* ปุ่ม: ยังไม่สำรวจ */}
+                    <button
+                      type="button"
+                      onClick={() => handleSetStatus(item.peano, 'ยังไม่สำรวจ')}
+                      className={`py-2 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 active:scale-95 ${
+                        !isCompleted && !isInProgress
+                          ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                          : 'text-slate-400 hover:text-amber-300 hover:bg-slate-900'
+                      }`}
+                      title="ปรับสถานะเป็น ยังไม่สำรวจ"
+                    >
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">ยังไม่สำรวจ</span>
+                    </button>
+
+                    {/* ปุ่ม: กำลังดำเนินการ */}
+                    <button
+                      type="button"
+                      onClick={() => handleSetStatus(item.peano, 'กำลังดำเนินการ')}
+                      className={`py-2 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 active:scale-95 ${
+                        isInProgress
+                          ? 'bg-sky-500 text-slate-950 font-black shadow-md'
+                          : 'text-slate-400 hover:text-sky-300 hover:bg-slate-900'
+                      }`}
+                      title="ปรับสถานะเป็น กำลังดำเนินการ"
+                    >
+                      <Zap className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">กำลังทำ</span>
+                    </button>
+
+                    {/* ปุ่ม: สำรวจแล้ว */}
+                    <button
+                      type="button"
+                      onClick={() => handleSetStatus(item.peano, 'สำรวจแล้ว')}
+                      className={`py-2 px-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 active:scale-95 ${
+                        isCompleted
+                          ? 'bg-emerald-500 text-slate-950 font-black shadow-md'
+                          : 'text-slate-400 hover:text-emerald-300 hover:bg-slate-900'
+                      }`}
+                      title="ปรับสถานะเป็น สำรวจแล้ว"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">สำรวจแล้ว</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* ROW 4: ACTION LINKS & UTILITIES */}

@@ -5,7 +5,7 @@ export interface StreetlightTransformer {
   id: string;
   phase: string;
   peano: string;
-  initialSurveyStatus: "สำรวจแล้ว" | "ยังไม่สำรวจ";
+  initialSurveyStatus: "สำรวจแล้ว" | "กำลังดำเนินการ" | "ยังไม่สำรวจ";
   kva: number;
   location: string;
   village: string;

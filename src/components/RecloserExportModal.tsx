@@ -9,7 +9,10 @@ import {
   X,
   Zap,
   FileSpreadsheet,
-  Clock3
+  Clock3,
+  Trash2,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { RecloserLog } from '../types';
 import { PRESET_RECLOSERS, formatThaiDateFull, formatThaiDateShort } from './RecloserTab';
@@ -19,13 +22,17 @@ interface RecloserExportModalProps {
   onClose: () => void;
   recloserLogs: RecloserLog[];
   initialSelectedDate?: string | null;
+  onDeleteLog?: (id: string) => void | Promise<void>;
+  onDeleteBatchLogs?: (ids: string[]) => void | Promise<void>;
 }
 
 export const RecloserExportModal: React.FC<RecloserExportModalProps> = ({
   isOpen,
   onClose,
   recloserLogs,
-  initialSelectedDate = null
+  initialSelectedDate = null,
+  onDeleteLog,
+  onDeleteBatchLogs
 }) => {
   // Filter states
   const [dateScope, setDateScope] = useState<'selected' | 'today' | '7days' | '30days' | 'custom' | 'all'>(
@@ -41,6 +48,8 @@ export const RecloserExportModal: React.FC<RecloserExportModalProps> = ({
   
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccessNotice, setExportSuccessNotice] = useState<string | null>(null);
+  const [showItemManagement, setShowItemManagement] = useState(false);
+  const [confirmDeleteAllInReport, setConfirmDeleteAllInReport] = useState(false);
 
   // Filter logs based on criteria
   const filteredLogs = useMemo(() => {
@@ -817,6 +826,115 @@ export const RecloserExportModal: React.FC<RecloserExportModalProps> = ({
               {stats.totalTripBR > 0 ? `Trip B/R รวม: ${stats.totalTripBR}` : 'ไม่มี Trip'}
             </span>
           </div>
+
+          {/* ITEM MANAGEMENT & DELETE SECTION (OPTIONAL EXPANDABLE) */}
+          {onDeleteLog && filteredLogs.length > 0 && (
+            <div className="bg-slate-950 rounded-2xl border border-slate-800 p-2.5 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setShowItemManagement(!showItemManagement)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-slate-300 hover:text-white cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>จัดการ / ลบรายการในรายงาน ({filteredLogs.length})</span>
+                  {showItemManagement ? (
+                    <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                  )}
+                </button>
+
+                {showItemManagement && !confirmDeleteAllInReport && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteAllInReport(true)}
+                    className="text-[10px] font-bold text-rose-400 hover:text-white bg-rose-950/50 hover:bg-rose-600 border border-rose-500/30 px-2 py-0.5 rounded-lg transition-all cursor-pointer"
+                  >
+                    ลบทั้งหมดในรายงานนี้
+                  </button>
+                )}
+              </div>
+
+              {/* Confirm Delete All in report */}
+              {confirmDeleteAllInReport && (
+                <div className="bg-rose-950/60 border border-rose-500/50 p-2.5 rounded-xl text-xs text-rose-200 flex flex-col gap-2 animate-fadeIn">
+                  <p className="font-bold">
+                    ⚠️ ยืนยันการลบทั้ง {filteredLogs.length} รายการที่เลือกในรายงานนี้หรือไม่?
+                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteAllInReport(false)}
+                      className="px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 text-[11px] font-bold hover:bg-slate-800 cursor-pointer"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ids = filteredLogs.map((l) => l.id);
+                        setConfirmDeleteAllInReport(false);
+                        if (onDeleteBatchLogs) {
+                          await onDeleteBatchLogs(ids);
+                        } else if (onDeleteLog) {
+                          for (const id of ids) {
+                            await onDeleteLog(id);
+                          }
+                        }
+                        setExportSuccessNotice(`ลบ ${ids.length} รายการในรายงานเรียบร้อย`);
+                        setTimeout(() => setExportSuccessNotice(null), 3000);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      ยืนยันลบทั้งหมด
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* List of items with individual delete buttons */}
+              {showItemManagement && (
+                <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1 animate-fadeIn">
+                  {filteredLogs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="bg-slate-900 p-2 rounded-xl border border-slate-800/80 flex items-center justify-between text-xs gap-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono font-bold text-amber-300 bg-amber-500/10 px-1 rounded text-[10px]">
+                            {log.recloserId}
+                          </span>
+                          <span className="font-mono text-slate-400 text-[10px]">
+                            {log.recordDate} {log.recordTime} น.
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 truncate">
+                          {log.recloserName} • B/R: {log.counterBR ?? '-'}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (onDeleteLog) {
+                            await onDeleteLog(log.id);
+                            setExportSuccessNotice(`ลบรายการ ${log.recloserId} เรียบร้อย`);
+                            setTimeout(() => setExportSuccessNotice(null), 2500);
+                          }
+                        }}
+                        className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer shrink-0"
+                        title="ลบรายการนี้"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
         </div>
 

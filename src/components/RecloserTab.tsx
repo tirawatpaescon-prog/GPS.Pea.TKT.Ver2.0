@@ -74,10 +74,16 @@ export const formatThaiDateFull = (dateStr: string): string => {
   }
 };
 
+export type DeleteConfirmTarget =
+  | { type: 'single'; log: RecloserLog }
+  | { type: 'day'; date: string; count: number; logIds: string[] }
+  | null;
+
 interface RecloserTabProps {
   recloserLogs: RecloserLog[];
   onSaveLog: (log: RecloserLog) => void | Promise<void>;
   onDeleteLog: (id: string) => void | Promise<void>;
+  onDeleteBatchLogs?: (ids: string[]) => void | Promise<void>;
   isSyncing?: boolean;
   lastSyncTime?: Date | null;
   cloudConnected?: boolean;
@@ -88,6 +94,7 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
   recloserLogs,
   onSaveLog,
   onDeleteLog,
+  onDeleteBatchLogs,
   isSyncing = false,
   lastSyncTime = null,
   cloudConnected = true,
@@ -97,6 +104,11 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
   const [selectedPresetId, setSelectedPresetId] = useState<string>(PRESET_RECLOSERS[0].id);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState(false);
+
+  // In-app Delete Confirmation Dialog State
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<DeleteConfirmTarget>(null);
+  const [deleteToastMsg, setDeleteToastMsg] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // History date drill-down state (null = show all date cards, string = viewing specific date)
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(null);
@@ -110,6 +122,42 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
   const openExportModal = (initialDate: string | null = null) => {
     setExportInitialDate(initialDate);
     setShowExportModal(true);
+  };
+
+  // Execute confirmed deletion
+  const handleExecuteDelete = async () => {
+    if (!deleteConfirmTarget || isDeleting) return;
+    setIsDeleting(true);
+
+    try {
+      if (deleteConfirmTarget.type === 'single') {
+        const targetLog = deleteConfirmTarget.log;
+        await onDeleteLog(targetLog.id);
+        setDeleteToastMsg(`ลบรายการ ${targetLog.recloserId} (${formatThaiDateShort(targetLog.recordDate)}) เรียบร้อย`);
+      } else if (deleteConfirmTarget.type === 'day') {
+        const { date, logIds } = deleteConfirmTarget;
+        if (onDeleteBatchLogs) {
+          await onDeleteBatchLogs(logIds);
+        } else {
+          for (const id of logIds) {
+            await onDeleteLog(id);
+          }
+        }
+        if (selectedHistoryDate === date) {
+          setSelectedHistoryDate(null);
+        }
+        setDeleteToastMsg(`ลบรายงานบันทึกของวันที่ ${formatThaiDateShort(date)} ทั้งหมดเรียบร้อย`);
+      }
+    } catch (err) {
+      console.error('Error during deletion:', err);
+      setDeleteToastMsg('เกิดข้อผิดพลาดในการลบข้อมูล กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmTarget(null);
+      setTimeout(() => {
+        setDeleteToastMsg(null);
+      }, 3500);
+    }
   };
 
   // Form State
@@ -491,12 +539,12 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
       {viewMode === 'form' && (
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           
-          {/* STEP 1: SELECT MAIN RECLOSER (7 จุดหลัก) */}
+          {/* STEP 1: SELECT MAIN RECLOSER */}
           <div className="bg-slate-900/95 border border-slate-800 rounded-3xl p-3.5 sm:p-4 shadow-xl flex flex-col gap-2.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-black text-amber-300 flex items-center gap-1.5">
                 <span className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-[10px] font-mono shadow-sm">1</span>
-                <span>เลือกจุดติดตั้ง Recloser (แตะเลือก 1 จุด):</span>
+                <span>จุดติดตั้ง Recloser:</span>
               </label>
             </div>
 
@@ -552,12 +600,12 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
             </div>
           </div>
 
-          {/* STEP 2: SELECT DATE & TIME (เลือกวันที่ & เวลา - ธีมสีขาว คมชัด สบายตา) */}
+          {/* STEP 2: SELECT DATE & TIME */}
           <div className="bg-white border-2 border-slate-200 rounded-3xl p-3.5 sm:p-4 shadow-xl flex flex-col gap-3 text-slate-900">
             <div className="flex items-center justify-between">
               <label className="text-xs font-black text-slate-900 flex items-center gap-1.5">
                 <span className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-[10px] font-mono shadow-sm">2</span>
-                <span>เลือกวันที่ & เวลาที่จดบันทึก:</span>
+                <span>วันที่และเวลา:</span>
               </label>
 
               {/* Quick Date Chips */}
@@ -579,14 +627,14 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
               </div>
             </div>
 
-            {/* Date Display Pill Banner (White & Amber Accent) */}
+            {/* Date Display Pill Banner */}
             <div className="bg-amber-50 border border-amber-300/80 p-2.5 sm:p-3 rounded-2xl flex items-center justify-between shadow-xs">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center shrink-0 shadow-sm font-bold">
                   <Calendar className="w-4 h-4" />
                 </div>
                 <div className="truncate">
-                  <div className="text-[10px] text-amber-800 font-bold">วันที่เลือกบันทึก:</div>
+                  <div className="text-[10px] text-amber-800 font-bold">วันที่บันทึก:</div>
                   <div className="text-xs sm:text-sm font-black text-slate-950 truncate">{formatThaiDateFull(recordDate)}</div>
                 </div>
               </div>
@@ -595,14 +643,14 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
               </span>
             </div>
 
-            {/* Date & Time Picker Controls (Crisp White Inputs with 16px font on mobile) */}
+            {/* Date & Time Picker Controls */}
             <div className="grid grid-cols-2 gap-2 sm:gap-2.5">
               {/* Date Input */}
               <div className="bg-slate-50 p-2 sm:p-2.5 rounded-2xl border-2 border-slate-200 flex flex-col justify-between">
                 <label className="block text-xs font-black text-slate-800 mb-1.5 flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
                     <Calendar className="w-3.5 h-3.5 text-amber-600" />
-                    <span>เลือกวันที่</span>
+                    <span>วันที่</span>
                   </span>
                 </label>
                 <input
@@ -620,7 +668,7 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                 <label className="block text-xs font-black text-slate-800 mb-1.5 flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-amber-600" />
-                    <span>เวลา (น.)</span>
+                    <span>เวลา</span>
                   </span>
                   <button
                     type="button"
@@ -650,18 +698,17 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                   1
                 </div>
                 <h3 className="text-sm font-black text-amber-300">
-                  1. Counter
+                  Counter
                 </h3>
               </div>
-              <span className="text-[10px] text-amber-400 font-mono">Operations Count</span>
             </div>
 
-            {/* B/R Counter (Large Input) */}
+            {/* B/R Counter */}
             <div className="bg-slate-950 p-2.5 sm:p-3 rounded-2xl border border-amber-500/40">
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-black text-amber-300 flex items-center gap-1.5">
                   <Activity className="w-4 h-4 text-amber-400" />
-                  <span>Counter - B/R (ครั้งที่ทำงานสะสม)</span>
+                  <span>Counter (B/R)</span>
                 </label>
                 {previousRecordForSelected?.counterBR !== undefined && (
                   <span className="text-[10px] text-slate-400 font-mono">
@@ -682,7 +729,7 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
             {/* Phase Counters: A, B, C, G */}
             <div>
               <label className="block text-[11px] font-bold text-slate-300 mb-1.5">
-                Counter แยกเฟส (A, B, C, G):
+                แยกเฟส:
               </label>
               <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
                 <div>
@@ -736,7 +783,7 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
             </div>
           </div>
 
-          {/* STEP 4: 2. CURRENT (A, B, C, G) */}
+          {/* STEP 4: CURRENT (A, B, C, G) */}
           <div className="bg-slate-900/95 border border-cyan-500/40 rounded-3xl p-3.5 sm:p-4 shadow-xl flex flex-col gap-3">
             <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2">
               <div className="flex items-center gap-2">
@@ -744,10 +791,9 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                   2
                 </div>
                 <h3 className="text-sm font-black text-cyan-300">
-                  2. Current (Ampere)
+                  Current (Ampere)
                 </h3>
               </div>
-              <span className="text-[10px] text-cyan-400 font-mono">Load Current (A)</span>
             </div>
 
             <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
@@ -830,6 +876,68 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
             <CheckCircle2 className="w-5 h-5" />
             <span>บันทึกค่า {currentPreset.id} ({currentPreset.name})</span>
           </button>
+
+          {/* RECENT RECORDS QUICK PREVIEW & DELETE */}
+          {recloserLogs.length > 0 && (
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-3.5 sm:p-4 shadow-lg flex flex-col gap-2.5 mt-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock3 className="w-4 h-4 text-amber-400" />
+                  <h4 className="text-xs font-black text-white">บันทึกล่าสุด (สามารถลบหรือตรวจสอบได้)</h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode('history');
+                    setSelectedHistoryDate(null);
+                  }}
+                  className="text-[11px] font-bold text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer"
+                >
+                  ดูทั้งหมด ({recloserLogs.length}) →
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {recloserLogs.slice(0, 3).map((log) => (
+                  <div
+                    key={log.id}
+                    className="bg-slate-950 p-2.5 rounded-2xl border border-slate-800 flex items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-black text-xs text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30">
+                          {log.recloserId}
+                        </span>
+                        <span className="text-xs font-bold text-white truncate">
+                          {log.recloserName}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {formatThaiDateShort(log.recordDate)} {log.recordTime} น.
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-1 flex items-center gap-2 flex-wrap">
+                        <span>B/R: <b className="text-slate-200">{log.counterBR ?? '-'}</b></span>
+                        <span>•</span>
+                        <span>Ia: <b className="text-cyan-300">{log.currentA ?? '-'}A</b></span>
+                        <span>Ib: <b className="text-cyan-300">{log.currentB ?? '-'}A</b></span>
+                        <span>Ic: <b className="text-cyan-300">{log.currentC ?? '-'}A</b></span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirmTarget({ type: 'single', log })}
+                      className="shrink-0 inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-rose-500/30 bg-rose-950/40 hover:bg-rose-600 text-rose-300 hover:text-white transition-all cursor-pointer active:scale-95 shadow-xs"
+                      title="ลบรายงานบันทึกนี้"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span>ลบ</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
         </form>
       )}
@@ -951,13 +1059,27 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                           ))}
                         </div>
 
-                        {/* Footer: Tap Hint */}
-                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                          <span className="text-[10px] text-slate-500 font-mono">
-                            {formatThaiDateShort(group.date)}
-                          </span>
+                        {/* Footer: Delete Day Report & Tap Hint */}
+                        <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteConfirmTarget({
+                                type: 'day',
+                                date: group.date,
+                                count: group.logs.length,
+                                logIds: group.logs.map((l) => l.id)
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-400 hover:text-white bg-rose-950/40 hover:bg-rose-600 border border-rose-500/30 px-2.5 py-1 rounded-xl transition-all cursor-pointer active:scale-95 shadow-xs"
+                            title="ลบรายงานบันทึกของวันนี้ทั้งหมด"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                            <span>ลบรายงานวันนี้ ({group.logs.length})</span>
+                          </button>
 
-                          <div className="flex items-center gap-1 font-bold text-cyan-400 group-hover:text-cyan-300">
+                          <div className="flex items-center gap-1 font-bold text-cyan-400 group-hover:text-cyan-300 shrink-0">
                             <span>แตะดูบันทึก</span>
                             <ChevronRight className="w-3.5 h-3.5" />
                           </div>
@@ -1035,6 +1157,23 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                           <span>ส่ง LINE</span>
                         </>
                       )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDeleteConfirmTarget({
+                          type: 'day',
+                          date: selectedHistoryDate,
+                          count: logsForSelectedDate.length,
+                          logIds: logsForSelectedDate.map((l) => l.id)
+                        })
+                      }
+                      className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-rose-500/40 bg-rose-500/15 hover:bg-rose-600 hover:text-white text-rose-300 transition-all cursor-pointer active:scale-95 shadow-sm"
+                      title="ลบรายงานบันทึกของวันนี้ทั้งหมด"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span>ลบรายงานวันนี้</span>
                     </button>
                   </div>
                 </div>
@@ -1221,15 +1360,13 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                           </button>
 
                           <button
-                            onClick={() => {
-                              if (confirm(`คุณต้องการลบประวัติของ "${log.recloserId}" วันที่ ${log.recordDate} เวลา ${log.recordTime} หรือไม่?`)) {
-                                onDeleteLog(log.id);
-                              }
-                            }}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
-                            title="ลบรายการนี้"
+                            type="button"
+                            onClick={() => setDeleteConfirmTarget({ type: 'single', log })}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border border-rose-500/40 bg-rose-950/40 hover:bg-rose-600 text-rose-300 hover:text-white transition-all cursor-pointer active:scale-95 shadow-xs"
+                            title="ลบรายงานบันทึกนี้"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                            <span>ลบบันทึกนี้</span>
                           </button>
                         </div>
                       </div>
@@ -1254,12 +1391,146 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
         </div>
       )}
 
+      {/* IN-APP MODAL: DELETE CONFIRMATION DIALOG */}
+      {deleteConfirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div
+            className="bg-slate-900 border border-rose-500/40 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-scaleUp"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-rose-950/90 via-slate-900 to-rose-950/90 p-4 border-b border-rose-500/30 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center font-bold shadow-md shadow-rose-950/40">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">
+                    {deleteConfirmTarget.type === 'single'
+                      ? 'ยืนยันลบรายการบันทึก Recloser'
+                      : 'ยืนยันลบรายงานบันทึกประจำวัน'}
+                  </h3>
+                  <p className="text-[11px] text-rose-300/80">
+                    ข้อมูลจะถูกลบออกจากฐานข้อมูล Cloud และเครื่องนี้ทันที
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-4 flex flex-col gap-3">
+              {deleteConfirmTarget.type === 'single' ? (
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">จุดติดตั้ง:</span>
+                    <span className="font-mono font-black text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30">
+                      {deleteConfirmTarget.log.recloserId}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">สถานที่:</span>
+                    <span className="font-bold text-white">
+                      {deleteConfirmTarget.log.recloserName}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">วันที่ / เวลา:</span>
+                    <span className="font-mono text-cyan-300 font-bold">
+                      {formatThaiDateFull(deleteConfirmTarget.log.recordDate)} เวลา {deleteConfirmTarget.log.recordTime} น.
+                    </span>
+                  </div>
+                  {deleteConfirmTarget.log.counterBR !== undefined && (
+                    <div className="flex items-center justify-between border-t border-slate-800/80 pt-1.5">
+                      <span className="text-slate-400">Counter B/R:</span>
+                      <span className="font-mono font-bold text-amber-300">
+                        {deleteConfirmTarget.log.counterBR} ครั้ง
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between border-t border-slate-800/80 pt-1.5">
+                    <span className="text-slate-400">โหลด Current:</span>
+                    <span className="font-mono text-cyan-400">
+                      Ia: {deleteConfirmTarget.log.currentA ?? '-'}A | Ib: {deleteConfirmTarget.log.currentB ?? '-'}A | Ic: {deleteConfirmTarget.log.currentC ?? '-'}A
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">วันที่ต้องการลบ:</span>
+                    <span className="font-bold text-white">
+                      {formatThaiDateFull(deleteConfirmTarget.date)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">จำนวนบันทึกที่จะถูกลบ:</span>
+                    <span className="font-mono font-black text-rose-300 bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/30">
+                      {deleteConfirmTarget.count} รายการ
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-amber-300/90 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 leading-relaxed">
+                    ⚠️ คำเตือน: ข้อมูลบันทึก Recloser ทุกจุดของวันที่ <b>{formatThaiDateShort(deleteConfirmTarget.date)}</b> จะถูกลบถาวร
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-slate-400">
+                คุณแน่ใจหรือไม่ว่าต้องการลบข้อมูลนี้? การดำเนินการนี้ไม่สามารถย้อนกลับได้
+              </p>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-3.5 bg-slate-950 border-t border-slate-800 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="px-4 py-2.5 rounded-xl border border-slate-700 hover:bg-slate-800 text-slate-300 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleExecuteDelete}
+                className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-rose-600/30 disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                <span>{isDeleting ? 'กำลังลบข้อมูล...' : 'ยืนยันลบข้อมูล'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOAST: DELETE RESULT NOTIFICATION */}
+      {deleteToastMsg && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900 border border-rose-500 text-white text-xs font-bold py-2.5 px-4 rounded-2xl shadow-2xl flex items-center gap-2 animate-fadeIn">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{deleteToastMsg}</span>
+        </div>
+      )}
+
       {/* RECLOSER REPORT EXPORT MODAL */}
       <RecloserExportModal
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
         recloserLogs={recloserLogs}
         initialSelectedDate={exportInitialDate}
+        onDeleteLog={onDeleteLog}
+        onDeleteBatchLogs={onDeleteBatchLogs}
       />
 
     </div>

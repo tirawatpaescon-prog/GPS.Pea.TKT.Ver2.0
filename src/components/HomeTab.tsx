@@ -2,20 +2,12 @@ import React from 'react';
 import { 
   Search, 
   Zap, 
-  MapPin, 
   Database, 
-  Activity, 
-  CheckCircle2, 
   Wifi, 
   WifiOff, 
-  FileText, 
   Sparkles,
-  Smartphone,
   ChevronRight,
-  ShieldAlert,
-  Gauge,
-  Lightbulb,
-  Building2
+  Lightbulb
 } from 'lucide-react';
 import { ActiveTab, RecloserLog } from '../types';
 import peaBotMascotImg from '../assets/images/pea_bot_mascot_1786454271309.jpg';
@@ -50,22 +42,22 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           <div className="flex-1 min-w-0">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-purple-500/20 border border-purple-400/30 text-purple-300 text-[10px] font-bold mb-1.5">
               <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
-              <span className="truncate">PEA Smart Field System</span>
+              <span>PEA Smart Field</span>
             </div>
             <h1 className="text-lg sm:text-xl font-black text-white tracking-tight leading-snug">
-              ระบบช่วยงานและค้นหาข้อมูล<br />
+              ระบบช่วยงานภาคสนาม<br />
               <span className="bg-gradient-to-r from-amber-300 via-purple-200 to-cyan-300 bg-clip-text text-transparent">
-                การไฟฟ้าส่วนภูมิภาค สาขาอำเภอ ท่าคันโท
+                กฟส.อำเภอท่าคันโท
               </span>
             </h1>
-            <p className="text-[11px] sm:text-xs text-slate-300 mt-1 font-medium leading-relaxed">
-              เครื่องมือสนับสนุนงานภาคสนาม: ค้นหาพิกัดผู้ใช้ไฟ & จดบันทึก Recloser
+            <p className="text-xs text-slate-300 mt-1 font-medium">
+              ค้นหาพิกัดผู้ใช้ไฟ • สำรวจโคมไฟ • จดบันทึก Recloser
             </p>
           </div>
 
           {/* 3D Mascot Avatar */}
           <div className="shrink-0 relative group">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden border-2 border-amber-400/80 shadow-xl shadow-purple-950/80 bg-slate-900 p-0.5 transform transition-transform group-hover:scale-105">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden border-2 border-amber-400/80 shadow-xl shadow-purple-950/80 bg-slate-900 p-0.5 transform transition-transform group-hover:scale-105">
               <img 
                 src={peaBotMascotImg} 
                 alt="PEA Bot 3D" 
@@ -83,7 +75,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-sm p-2 rounded-xl border border-purple-400/20">
             <Database className="w-4 h-4 text-purple-400 shrink-0" />
             <div className="truncate">
-              <div className="text-[9px] text-slate-400 font-semibold">ฐานข้อมูลผู้ใช้ไฟ</div>
+              <div className="text-[10px] text-slate-400 font-medium">ข้อมูลผู้ใช้ไฟ</div>
               <div className="text-xs font-bold text-white font-mono">
                 {totalRecordsCount > 0 ? `${totalRecordsCount.toLocaleString()} รายการ` : 'พร้อมใช้งาน'}
               </div>
@@ -93,7 +85,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-sm p-2 rounded-xl border border-purple-400/20">
             <Zap className="w-4 h-4 text-amber-400 shrink-0" />
             <div className="truncate">
-              <div className="text-[9px] text-slate-400 font-semibold">ประวัติ Recloser</div>
+              <div className="text-[10px] text-slate-400 font-medium">ประวัติ Recloser</div>
               <div className="text-xs font-bold text-amber-300 font-mono">
                 {recloserLogs.length} รายการ
               </div>
@@ -102,12 +94,12 @@ export const HomeTab: React.FC<HomeTabProps> = ({
         </div>
       </div>
 
-      {/* 2. TWO PRIMARY FUNCTION CARDS (PROPORTIONAL MOBILE TOUCH TARGETS) */}
+      {/* 2. PRIMARY FUNCTION CARDS */}
       <div className="flex flex-col gap-2.5">
         <div className="flex items-center justify-between px-1">
           <span className="text-xs font-black text-slate-300 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-purple-400" />
-            <span>เลือกฟังก์ชันการทำงานหลัก</span>
+            <span>ฟังก์ชันการทำงาน</span>
           </span>
           <span className="text-[10px] text-slate-500">แตะเพื่อเข้าใช้งาน</span>
         </div>
@@ -116,7 +108,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
         <div 
           id="btn-nav-search-consumer"
           onClick={() => onNavigateTab('search')}
-          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 hover:from-purple-950/90 hover:via-indigo-900/80 hover:to-slate-900 border border-slate-800 hover:border-purple-500/60 rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-lg hover:shadow-purple-900/30 active:scale-[0.98]"
+          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 hover:from-purple-950/90 hover:via-indigo-900/80 hover:to-slate-900 border border-slate-800 hover:border-purple-500/60 rounded-2xl sm:rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-md hover:shadow-purple-900/30 active:scale-[0.98]"
         >
           <div className="flex items-center justify-between gap-3">
             <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400 group-hover:bg-purple-600 group-hover:text-white transition-all shadow-inner shrink-0">
@@ -124,28 +116,12 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                  ฟังก์ชัน 1
-                </span>
-                <h3 className="text-sm sm:text-base font-black text-white group-hover:text-amber-300 transition-colors truncate">
-                  ค้นหาผู้ใช้ไฟ & พิกัด GPS
-                </h3>
-              </div>
-              <p className="text-[11px] sm:text-xs text-slate-400 font-medium line-clamp-2 leading-relaxed">
-                ค้นหาด้วยเลข CA, PEA Meter, บ้านเลขที่/หมู่ และชื่อผู้ใช้ไฟ พร้อมนำทาง Google Maps
+              <h3 className="text-sm sm:text-base font-black text-white group-hover:text-amber-300 transition-colors truncate">
+                ค้นหาพิกัดผู้ใช้ไฟ
+              </h3>
+              <p className="text-xs text-slate-400 font-medium mt-0.5 line-clamp-1">
+                ค้นหาด้วย CA, PEA Meter, บ้านเลขที่ หรือชื่อผู้ใช้ไฟ
               </p>
-
-              <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px] font-bold text-purple-300">
-                <span className="flex items-center gap-1 bg-purple-950/80 border border-purple-800/60 px-2 py-0.5 rounded-lg">
-                  <Smartphone className="w-3 h-3 text-amber-400" />
-                  สั่งการด้วยเสียง
-                </span>
-                <span className="flex items-center gap-1 bg-purple-950/80 border border-purple-800/60 px-2 py-0.5 rounded-lg">
-                  <MapPin className="w-3 h-3 text-emerald-400" />
-                  พิกัดนำทาง 100%
-                </span>
-              </div>
             </div>
 
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 group-hover:bg-purple-600 group-hover:text-white text-slate-400 flex items-center justify-center shrink-0 transition-all">
@@ -154,11 +130,11 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           </div>
         </div>
 
-        {/* FUNCTION 2: สำรวจโคมไฟส่องสว่าง (106 หม้อแปลง / 23 หมู่บ้าน) */}
+        {/* FUNCTION 2: สำรวจโคมไฟส่องสว่าง */}
         <div 
           id="btn-nav-streetlight"
           onClick={() => onNavigateTab('streetlight')}
-          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-amber-950/40 to-slate-900 hover:from-amber-950/80 hover:via-yellow-950/60 hover:to-slate-900 border border-slate-800 hover:border-amber-500/60 rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-lg hover:shadow-amber-900/20 active:scale-[0.98]"
+          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-amber-950/40 to-slate-900 hover:from-amber-950/80 hover:via-yellow-950/60 hover:to-slate-900 border border-slate-800 hover:border-amber-500/60 rounded-2xl sm:rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-md hover:shadow-amber-900/20 active:scale-[0.98]"
         >
           <div className="flex items-center justify-between gap-3">
             <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 group-hover:bg-amber-500 group-hover:text-slate-950 transition-all shadow-inner shrink-0">
@@ -166,28 +142,12 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  ฟังก์ชัน 2
-                </span>
-                <h3 className="text-sm sm:text-base font-black text-white group-hover:text-amber-300 transition-colors truncate">
-                  สำรวจโคมไฟส่องสว่าง (106 หม้อแปลง)
-                </h3>
-              </div>
-              <p className="text-[11px] sm:text-xs text-slate-400 font-medium line-clamp-2 leading-relaxed">
-                แยกตาม 23 หมู่บ้าน พร้อมปุ่มบันทึกสถานะ สำรวจแล้ว/ยังไม่สำรวจ และพิกัด Google Maps
+              <h3 className="text-sm sm:text-base font-black text-white group-hover:text-amber-300 transition-colors truncate">
+                สำรวจโคมไฟส่องสว่าง
+              </h3>
+              <p className="text-xs text-slate-400 font-medium mt-0.5 line-clamp-1">
+                บันทึกและติดตามสถานะหม้อแปลง 106 เครื่อง 23 หมู่บ้าน
               </p>
-
-              <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px] font-bold text-amber-300">
-                <span className="flex items-center gap-1 bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded-lg">
-                  <Building2 className="w-3 h-3 text-amber-400" />
-                  เลือกรายหมู่บ้าน (Dropdown)
-                </span>
-                <span className="flex items-center gap-1 bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 rounded-lg">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                  กดบันทึกสถานะได้ทันที
-                </span>
-              </div>
             </div>
 
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 group-hover:bg-amber-500 group-hover:text-slate-950 text-slate-400 flex items-center justify-center shrink-0 transition-all">
@@ -196,11 +156,11 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           </div>
         </div>
 
-        {/* FUNCTION 3: จดหน่วย Recloser (7 จุดหลัก) */}
+        {/* FUNCTION 3: จดหน่วย Recloser */}
         <div 
           id="btn-nav-recloser"
           onClick={() => onNavigateTab('recloser')}
-          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-orange-950/30 to-slate-900 hover:from-orange-950/70 hover:via-amber-950/50 hover:to-slate-900 border border-slate-800 hover:border-orange-500/60 rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-lg hover:shadow-orange-900/20 active:scale-[0.98]"
+          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-orange-950/30 to-slate-900 hover:from-orange-950/70 hover:via-amber-950/50 hover:to-slate-900 border border-slate-800 hover:border-orange-500/60 rounded-2xl sm:rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-md hover:shadow-orange-900/20 active:scale-[0.98]"
         >
           <div className="flex items-center justify-between gap-3">
             <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-orange-500/20 border border-orange-500/40 flex items-center justify-center text-orange-400 group-hover:bg-orange-500 group-hover:text-slate-950 transition-all shadow-inner shrink-0">
@@ -208,28 +168,12 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-orange-500/20 text-orange-300 border border-orange-500/30">
-                  ฟังก์ชัน 3
-                </span>
-                <h3 className="text-sm sm:text-base font-black text-white group-hover:text-orange-300 transition-colors truncate">
-                  จดหน่วย Recloser (7 จุดหลัก)
-                </h3>
-              </div>
-              <p className="text-[11px] sm:text-xs text-slate-400 font-medium line-clamp-2 leading-relaxed">
-                บันทึกค่า Counter (B/R, A, B, C, G) และ Current (A, B, C, G) พร้อมดูประวัติย้อนหลัง
+              <h3 className="text-sm sm:text-base font-black text-white group-hover:text-orange-300 transition-colors truncate">
+                บันทึกค่า Recloser
+              </h3>
+              <p className="text-xs text-slate-400 font-medium mt-0.5 line-clamp-1">
+                จดหน่วย Counter และ Current 7 จุดหลัก พร้อมออกรายงาน
               </p>
-
-              <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px] font-bold text-orange-300">
-                <span className="flex items-center gap-1 bg-orange-950/80 border border-orange-800/60 px-2 py-0.5 rounded-lg">
-                  <Activity className="w-3 h-3 text-orange-400" />
-                  Counter B/R & เฟส
-                </span>
-                <span className="flex items-center gap-1 bg-orange-950/80 border border-orange-800/60 px-2 py-0.5 rounded-lg">
-                  <FileText className="w-3 h-3 text-cyan-400" />
-                  ดูย้อนหลัง & ส่ง LINE
-                </span>
-              </div>
             </div>
 
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 group-hover:bg-orange-500 group-hover:text-slate-950 text-slate-400 flex items-center justify-center shrink-0 transition-all">

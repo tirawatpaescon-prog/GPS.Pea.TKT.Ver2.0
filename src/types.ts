@@ -77,3 +77,5 @@ export interface RecloserLog {
 }
 
 export type ActiveTab = 'home' | 'search' | 'streetlight' | 'recloser';
+
+export type StreetlightSurveyStatusType = 'สำรวจแล้ว' | 'กำลังดำเนินการ' | 'ยังไม่สำรวจ';
