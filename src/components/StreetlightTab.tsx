@@ -23,7 +23,14 @@ import {
   RefreshCw,
   Cloud,
   Wifi,
-  CheckCheck
+  CheckCheck,
+  Navigation,
+  Compass,
+  Route,
+  LocateFixed,
+  Car,
+  ArrowUp,
+  ArrowDown
 } from 'lucide-react';
 import { STREETLIGHT_TRANSFORMERS, STREETLIGHT_VILLAGES, StreetlightTransformer } from '../data/streetlightSurveyData';
 import { StreetlightSurveyStatusType } from '../types';
@@ -33,6 +40,16 @@ import {
   bulkSetTransformerSurveyStatuses,
   testFirestoreConnection
 } from '../lib/firebase';
+import {
+  RouteSortMode,
+  TransformerCoord,
+  RouteStop,
+  RoutePlan,
+  getTransformerCoords,
+  formatDistance,
+  sequenceRoute,
+  generateRouteSummaryText
+} from '../utils/routeSequencer';
 
 const STORAGE_KEY = 'pea_streetlight_survey_statuses_v1';
 
@@ -133,6 +150,37 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
   // 5. Toast / Feedback state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // 6. Route Sequencing State for "กำลังทำ"
+  const [routeSortMode, setRouteSortMode] = useState<RouteSortMode>('nearest_gps');
+  const [userLocation, setUserLocation] = useState<TransformerCoord | null>(null);
+  const [isLocating, setIsLocating] = useState<boolean>(false);
+
+  // Geolocation fetcher for Route Sequencing
+  const handleGetLocation = useCallback(() => {
+    if (typeof window === 'undefined' || !navigator?.geolocation) {
+      showToast('⚠️ อุปกรณ์ไม่รองรับ Geolocation GPS');
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setIsLocating(false);
+        const coords: TransformerCoord = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        };
+        setUserLocation(coords);
+        showToast(`📍 บันทึกพิกัด GPS ปัจจุบันแล้ว (ความแม่นยำ ±${Math.round(pos.coords.accuracy)} ม.)`);
+      },
+      (err) => {
+        setIsLocating(false);
+        console.warn('[GPS] Geolocation error:', err);
+        showToast('⚠️ ไม่สามารถอ่านพิกัด GPS ได้ (จัดลำดับตามพิกัดหม้อแปลงลูกแรก)');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -314,8 +362,8 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
     };
   }, [activeVillage, overallStats]);
 
-  // Filter transformers
-  const filteredTransformers = useMemo(() => {
+  // 1. Base Filtered transformers (filtered by village, status, search)
+  const baseFilteredTransformers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
 
     return STREETLIGHT_TRANSFORMERS.filter((item) => {
@@ -351,6 +399,43 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
       return true;
     });
   }, [activeVillage, statusFilter, searchQuery, statusMap]);
+
+  // 2. Route Sequencing calculation for "กำลังทำ" (In Progress)
+  const inProgressRoutePlan = useMemo<RoutePlan | null>(() => {
+    if (statusFilter !== 'in_progress') {
+      return null;
+    }
+    return sequenceRoute(baseFilteredTransformers, routeSortMode, userLocation);
+  }, [statusFilter, baseFilteredTransformers, routeSortMode, userLocation]);
+
+  // 3. Final display list: sequenced in optimal travel order if in_progress, else regular filtered
+  const filteredTransformers = useMemo(() => {
+    if (statusFilter === 'in_progress' && inProgressRoutePlan) {
+      return inProgressRoutePlan.stops.map((s) => s.transformer);
+    }
+    return baseFilteredTransformers;
+  }, [statusFilter, inProgressRoutePlan, baseFilteredTransformers]);
+
+  // 4. Map for instant O(1) lookup of stop details by peano
+  const routeStopMap = useMemo(() => {
+    if (!inProgressRoutePlan) return {};
+    const map: Record<string, RouteStop> = {};
+    for (const stop of inProgressRoutePlan.stops) {
+      map[stop.transformer.peano] = stop;
+    }
+    return map;
+  }, [inProgressRoutePlan]);
+
+  // Copy Route Plan for LINE sharing
+  const handleCopyRoutePlan = () => {
+    if (!inProgressRoutePlan || inProgressRoutePlan.stops.length === 0) {
+      showToast('⚠️ ไม่มีหม้อแปลงที่กำลังทำในรายการ');
+      return;
+    }
+    const text = generateRouteSummaryText(inProgressRoutePlan, activeVillage, routeSortMode);
+    navigator.clipboard.writeText(text);
+    showToast('📋 คัดลอกแผนจัดลำดับเดินทางสำหรับส่ง LINE แล้ว');
+  };
 
   // Copy details helper
   const handleCopyDetails = (item: StreetlightTransformer) => {
@@ -679,6 +764,24 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
             </button>
           </div>
         )}
+
+        {/* Quick Route Shortcut if there are tasks in progress and user is not yet on the in_progress tab */}
+        {selectedVillageStats.inProgress > 0 && statusFilter !== 'in_progress' && (
+          <button
+            type="button"
+            onClick={() => setStatusFilter('in_progress')}
+            className="mt-2 w-full py-2 px-3 rounded-xl bg-gradient-to-r from-sky-950/80 to-blue-950/80 hover:from-sky-900/80 hover:to-blue-900/80 border border-sky-500/30 text-sky-300 font-bold text-xs flex items-center justify-between transition-all cursor-pointer shadow-sm"
+          >
+            <div className="flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-sky-400 animate-pulse shrink-0" />
+              <span>มี {selectedVillageStats.inProgress} เครื่องกำลังทำ</span>
+            </div>
+            <div className="flex items-center gap-1 text-[11px] text-sky-300 font-bold">
+              <span>🧭 ดูจัดลำดับเส้นทาง Lat/Long</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </div>
+          </button>
+        )}
       </div>
 
       {/* 3. SEARCH & STATUS FILTER ROW */}
@@ -762,11 +865,179 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
         </div>
       </div>
 
+      {/* 🧭 IN-PROGRESS ROUTE SEQUENCING CONTROL PANEL (อิงพิกัด Lat/Long) */}
+      {statusFilter === 'in_progress' && (
+        <div className="bg-gradient-to-br from-sky-950/70 via-slate-900 to-slate-950 border border-sky-500/40 rounded-3xl p-3.5 sm:p-4 shadow-xl shadow-sky-950/30 space-y-3">
+          {/* Header Row */}
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-sky-500/20 border border-sky-500/40 flex items-center justify-center text-sky-400 shrink-0 shadow-inner">
+                <Navigation className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
+                  <span>จัดลำดับการเดินทางสำรวจ</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-500 text-slate-950 font-black">
+                    {inProgressRoutePlan?.validStopsCount || 0} จุดแวะ
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  คำนวณระยะทางและจัดเส้นทางอิงพิกัด Lat/Long ของหม้อแปลง
+                </p>
+              </div>
+            </div>
+
+            {/* GPS Locate Button */}
+            <button
+              type="button"
+              onClick={handleGetLocation}
+              disabled={isLocating}
+              className={`py-1.5 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 shrink-0 active:scale-95 ${
+                userLocation
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                  : 'bg-sky-500 text-slate-950 border-sky-400 hover:bg-sky-400 font-black shadow-md'
+              }`}
+              title="ดึงพิกัด GPS ตำแหน่งปัจจุบันของคุณ"
+            >
+              <LocateFixed className={`w-3.5 h-3.5 ${isLocating ? 'animate-spin' : ''}`} />
+              <span>{userLocation ? 'รีเฟรช GPS' : 'ดึงพิกัด GPS'}</span>
+            </button>
+          </div>
+
+          {/* Stats Bar */}
+          <div className="grid grid-cols-2 gap-2 bg-slate-950/90 p-2.5 rounded-2xl border border-slate-800/90 text-xs">
+            <div className="flex items-center gap-1.5">
+              <Car className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span className="text-slate-400 text-[11px]">ระยะทางรวม:</span>
+              <span className="font-mono font-black text-sky-300">
+                ~{formatDistance(inProgressRoutePlan?.totalDistanceMeters || 0)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 truncate">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${userLocation ? 'bg-emerald-400 ring-2 ring-emerald-400/40 animate-pulse' : 'bg-amber-400'}`} />
+              <span className="text-[11px] text-slate-300 truncate font-mono">
+                {userLocation
+                  ? `GPS: ${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}`
+                  : 'ยังไม่มีพิกัดคุณ (อิงจากจุดแรก)'}
+              </span>
+            </div>
+          </div>
+
+          {/* Sorting Pattern Buttons */}
+          <div>
+            <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold mb-1.5 px-0.5">
+              <span>เลือกวิธีการจัดลำดับ:</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
+              <button
+                type="button"
+                onClick={() => setRouteSortMode('nearest_gps')}
+                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] ${
+                  routeSortMode === 'nearest_gps'
+                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
+                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+                }`}
+              >
+                <Navigation className="w-3 h-3 shrink-0" />
+                <span className="truncate">ใกล้ฉันที่สุด (GPS)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRouteSortMode('north_south')}
+                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] ${
+                  routeSortMode === 'north_south'
+                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
+                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+                }`}
+              >
+                <ArrowDown className="w-3 h-3 shrink-0" />
+                <span className="truncate">เหนือ ➔ ใต้ (Lat)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRouteSortMode('south_north')}
+                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] ${
+                  routeSortMode === 'south_north'
+                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
+                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+                }`}
+              >
+                <ArrowUp className="w-3 h-3 shrink-0" />
+                <span className="truncate">ใต้ ➔ เหนือ (Lat)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRouteSortMode('west_east')}
+                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] ${
+                  routeSortMode === 'west_east'
+                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
+                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+                }`}
+              >
+                <Compass className="w-3 h-3 shrink-0" />
+                <span className="truncate">ตก ➔ ออก (Lng)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRouteSortMode('east_west')}
+                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] sm:col-span-2 ${
+                  routeSortMode === 'east_west'
+                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
+                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+                }`}
+              >
+                <Compass className="w-3 h-3 shrink-0" />
+                <span className="truncate">ออก ➔ ตก (Lng)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Action Buttons: Open multi-stop Google Maps / Copy for LINE */}
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            {inProgressRoutePlan?.googleMapsUrl ? (
+              <a
+                href={inProgressRoutePlan.googleMapsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="py-2.5 px-3 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-sky-950/40 cursor-pointer transition-all active:scale-95"
+              >
+                <Route className="w-4 h-4 shrink-0" />
+                <span className="truncate">เปิด Maps นำทางทั้งเส้น</span>
+                <ExternalLink className="w-3 h-3 opacity-80 shrink-0" />
+              </a>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="py-2.5 px-3 rounded-2xl bg-slate-800 text-slate-500 font-bold text-xs flex items-center justify-center gap-1.5 cursor-not-allowed"
+              >
+                <Route className="w-4 h-4 shrink-0" />
+                <span>ไม่มีพิกัดนำทาง</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleCopyRoutePlan}
+              className="py-2.5 px-3 rounded-2xl bg-slate-950 hover:bg-slate-800 text-sky-300 border border-slate-800 hover:border-sky-500/40 font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm"
+            >
+              <Share2 className="w-4 h-4 text-sky-400 shrink-0" />
+              <span className="truncate">คัดลอกส่ง LINE</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 4. TRANSFORMER CARDS LIST */}
       <div className="space-y-2.5">
         <div className="flex items-center justify-between px-1 text-xs text-slate-400 font-bold">
           <span>
             {activeVillage === 'all' ? 'รายการหม้อแปลงทั้งหมด' : `หม้อแปลงใน: ${activeVillage}`}
+            {statusFilter === 'in_progress' && ' (เรียงตามลำดับเส้นทาง)'}
           </span>
           <span className="font-mono text-[11px] text-amber-300">
             แสดง {filteredTransformers.length} เครื่อง
@@ -775,9 +1046,17 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
 
         {filteredTransformers.length === 0 ? (
           <div className="bg-slate-900/60 border border-dashed border-slate-800 rounded-3xl p-8 text-center">
-            <Lightbulb className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-            <p className="text-xs font-bold text-slate-300">ไม่พบหม้อแปลงตามเงื่อนไขที่เลือก</p>
-            <p className="text-[11px] text-slate-500 mt-1">ลองเปลี่ยนตัวกรองสถานะ หรือคำค้นหา</p>
+            <Lightbulb className={`w-8 h-8 mx-auto mb-2 ${statusFilter === 'in_progress' ? 'text-sky-400/80' : 'text-slate-600'}`} />
+            <p className="text-xs font-bold text-slate-200">
+              {statusFilter === 'in_progress'
+                ? 'ยังไม่มีหม้อแปลงในสถานะ "กำลังทำ"'
+                : 'ไม่พบหม้อแปลงตามเงื่อนไขที่เลือก'}
+            </p>
+            <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto">
+              {statusFilter === 'in_progress'
+                ? 'กดปุ่ม [กำลังทำ] ที่การ์ดหม้อแปลงที่ต้องการลงพื้นที่สำรวจ เพื่อให้ระบบคำนวณและจัดลำดับเส้นทางเดินทาง (อิงพิกัด Lat/Long) ให้โดยอัตโนมัติ'
+                : 'ลองเปลี่ยนตัวกรองสถานะ หรือคำค้นหา'}
+            </p>
           </div>
         ) : (
           filteredTransformers.map((item, idx) => {
@@ -785,6 +1064,7 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
             const isCompleted = currentStatus === 'สำรวจแล้ว';
             const isInProgress = currentStatus === 'กำลังดำเนินการ';
             const is3Phase = item.phase.includes('3');
+            const routeStop = statusFilter === 'in_progress' ? routeStopMap[item.peano] : null;
 
             return (
               <div
@@ -793,10 +1073,31 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
                   isCompleted
                     ? 'bg-slate-900/90 border-emerald-500/40 shadow-emerald-950/20'
                     : isInProgress
-                    ? 'bg-slate-900/90 border-sky-500/50 shadow-sky-950/20'
+                    ? 'bg-slate-900/90 border-sky-500/50 shadow-sky-950/20 ring-1 ring-sky-500/20'
                     : 'bg-slate-900/95 border-slate-800 hover:border-amber-500/40'
                 }`}
               >
+                {/* 🧭 IN-PROGRESS ROUTE STOP HEADER (จัดลำดับการเดินทาง) */}
+                {routeStop && (
+                  <div className="flex items-center justify-between bg-gradient-to-r from-sky-500/20 to-blue-500/10 border border-sky-500/30 px-3 py-1.5 rounded-2xl mb-2.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-6 h-6 rounded-full bg-sky-500 text-slate-950 font-black text-xs flex items-center justify-center font-mono shadow-sm shrink-0">
+                        {routeStop.stopNumber}
+                      </span>
+                      <span className="text-xs font-black text-sky-200 truncate">
+                        {routeStop.stopNumber === 1 ? 'จุดแวะที่ 1 (จุดเริ่มต้น)' : `จุดแวะที่ ${routeStop.stopNumber}`}
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] font-mono font-bold text-sky-300 text-right shrink-0">
+                      {routeStop.stopNumber === 1 && routeStop.distanceFromUserMeters !== null ? (
+                        <span>ห่างจากคุณ {formatDistance(routeStop.distanceFromUserMeters)}</span>
+                      ) : routeStop.distanceFromPrevMeters !== null ? (
+                        <span>ห่างจากจุดก่อนหน้า: {formatDistance(routeStop.distanceFromPrevMeters)}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
                 {/* ROW 1: BADGES & IDENTIFIERS */}
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -939,7 +1240,22 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
 
                 {/* ROW 4: ACTION LINKS & UTILITIES */}
                 <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[11px]">
-                  {/* Google Maps link */}
+                  {/* Direct Driving Navigation link */}
+                  {item.latitude && item.longitude && (
+                    <a
+                      href={`https://www.google.com/maps/dir/?api=1&destination=${item.latitude},${item.longitude}&travelmode=driving`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 py-1 px-2.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 transition-all font-bold active:scale-95"
+                      title="เริ่มนำทาง GPS ด้วยรถยนต์ไปยังหม้อแปลงนี้"
+                    >
+                      <Navigation className="w-3 h-3 text-sky-400" />
+                      <span>นำทางไปจุดนี้</span>
+                      <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                    </a>
+                  )}
+
+                  {/* Google Maps search link */}
                   {item.latitude && item.longitude && (
                     <a
                       href={`https://www.google.com/maps/search/?api=1&query=${item.latitude},${item.longitude}`}

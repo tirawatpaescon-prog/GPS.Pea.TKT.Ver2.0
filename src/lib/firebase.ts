@@ -1,5 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 import {
+  initializeFirestore,
   getFirestore,
   doc,
   setDoc,
@@ -17,10 +19,93 @@ import { RecloserLog, StreetlightSurveyStatusType } from '../types';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-export const db =
+export const auth = getAuth(app);
+
+const databaseId =
   firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-    ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-    : getFirestore(app);
+    ? firebaseConfig.firestoreDatabaseId
+    : undefined;
+
+/**
+ * Initialize Firestore with experimentalForceLongPolling: true.
+ * This prevents the WebChannel streaming drop error:
+ * [code=unavailable]: Could not reach Cloud Firestore backend.
+ * and ensures flawless connections in browser iframes, mobile networks, and proxy environments.
+ */
+let dbInstance;
+try {
+  dbInstance = initializeFirestore(
+    app,
+    {
+      experimentalForceLongPolling: true
+    },
+    databaseId
+  );
+} catch {
+  dbInstance = databaseId ? getFirestore(app, databaseId) : getFirestore(app);
+}
+
+export const db = dbInstance;
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write'
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth?.currentUser?.uid,
+      email: auth?.currentUser?.email,
+      emailVerified: auth?.currentUser?.emailVerified,
+      isAnonymous: auth?.currentUser?.isAnonymous,
+      tenantId: auth?.currentUser?.tenantId,
+      providerInfo:
+        auth?.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email
+        })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// Initial connection check per Firebase integration requirements
+async function testConnectionOnBoot() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.warn('[Firebase] Client currently operating in offline mode.');
+    }
+  }
+}
+testConnectionOnBoot();
 
 export interface SurveyStatusRecord {
   peano: string;
@@ -62,7 +147,10 @@ export function subscribeToStreetlightSurveys(
       onUpdate(results);
     },
     (err) => {
-      console.warn('[Firebase] Firestore onSnapshot subscription error:', err);
+      if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+        handleFirestoreError(err, OperationType.GET, COLLECTION_NAME);
+      }
+      console.warn('[Firebase] Firestore onSnapshot operating in cached/offline state:', err?.message || err);
       if (onError) onError(err);
     }
   );
@@ -79,18 +167,26 @@ export async function setTransformerSurveyStatus(
   status: StreetlightSurveyStatusType,
   village?: string
 ): Promise<void> {
-  const docRef = doc(db, COLLECTION_NAME, peano);
-  const updatedAt = Date.now();
-  await setDoc(
-    docRef,
-    {
-      peano,
-      status,
-      updatedAt,
-      ...(village ? { village } : {})
-    },
-    { merge: true }
-  );
+  try {
+    const docRef = doc(db, COLLECTION_NAME, peano);
+    const updatedAt = Date.now();
+    await setDoc(
+      docRef,
+      {
+        peano,
+        status,
+        updatedAt,
+        ...(village ? { village } : {})
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.WRITE, `${COLLECTION_NAME}/${peano}`);
+    }
+    console.warn('[Firebase] Warning setting survey status, falling back to local storage:', err?.message || err);
+    throw err;
+  }
 }
 
 /**
@@ -102,27 +198,35 @@ export async function bulkSetTransformerSurveyStatuses(
   const entries = Object.entries(statuses);
   if (entries.length === 0) return;
 
-  // Firestore batch limit is 500 operations per batch
-  const BATCH_SIZE = 400;
-  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-    const chunk = entries.slice(i, i + BATCH_SIZE);
-    const batch = writeBatch(db);
+  try {
+    // Firestore batch limit is 500 operations per batch
+    const BATCH_SIZE = 400;
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const chunk = entries.slice(i, i + BATCH_SIZE);
+      const batch = writeBatch(db);
 
-    for (const [peano, item] of chunk) {
-      const docRef = doc(db, COLLECTION_NAME, peano);
-      batch.set(
-        docRef,
-        {
-          peano,
-          status: item.status,
-          updatedAt: item.updatedAt || Date.now(),
-          ...(item.village ? { village: item.village } : {})
-        },
-        { merge: true }
-      );
+      for (const [peano, item] of chunk) {
+        const docRef = doc(db, COLLECTION_NAME, peano);
+        batch.set(
+          docRef,
+          {
+            peano,
+            status: item.status,
+            updatedAt: item.updatedAt || Date.now(),
+            ...(item.village ? { village: item.village } : {})
+          },
+          { merge: true }
+        );
+      }
+
+      await batch.commit();
     }
-
-    await batch.commit();
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.WRITE, COLLECTION_NAME);
+    }
+    console.warn('[Firebase] Warning bulk updating statuses:', err?.message || err);
+    throw err;
   }
 }
 
@@ -135,8 +239,12 @@ export async function testFirestoreConnection(): Promise<boolean> {
     await getDocFromServer(testDoc);
     return true;
   } catch (err: any) {
-    // If permission or not found, it still proved connection reached Firestore server
-    if (err?.code === 'unavailable' || err?.message?.includes('offline')) {
+    // If not found or permission check, connection reached server
+    if (
+      err?.code === 'unavailable' ||
+      err?.message?.includes('offline') ||
+      err?.message?.includes('could not be completed')
+    ) {
       return false;
     }
     return true;
@@ -160,8 +268,11 @@ export async function fetchRecloserLogsFromFirestore(): Promise<RecloserLog[]> {
       }
     });
     return logs;
-  } catch (err) {
-    console.warn('[Firebase] Error fetching recloser logs from Firestore:', err);
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.GET, RECLOSER_COLLECTION);
+    }
+    console.warn('[Firebase] Note: Firestore fetch not available, using offline cache:', err?.message || err);
     throw err;
   }
 }
@@ -174,8 +285,11 @@ export async function saveRecloserLogToFirestore(log: RecloserLog): Promise<void
   try {
     const docRef = doc(db, RECLOSER_COLLECTION, log.id);
     await setDoc(docRef, log, { merge: true });
-  } catch (err) {
-    console.error('[Firebase] Error saving recloser log to Firestore:', err);
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.WRITE, `${RECLOSER_COLLECTION}/${log.id}`);
+    }
+    console.error('[Firebase] Error saving recloser log to Firestore:', err?.message || err);
     throw err;
   }
 }
@@ -187,8 +301,11 @@ export async function deleteRecloserLogFromFirestore(logId: string): Promise<voi
   try {
     const docRef = doc(db, RECLOSER_COLLECTION, logId);
     await deleteDoc(docRef);
-  } catch (err) {
-    console.error('[Firebase] Error deleting recloser log from Firestore:', err);
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.DELETE, `${RECLOSER_COLLECTION}/${logId}`);
+    }
+    console.error('[Firebase] Error deleting recloser log from Firestore:', err?.message || err);
     throw err;
   }
 }
@@ -205,8 +322,11 @@ export async function deleteBatchRecloserLogsFromFirestore(logIds: string[]): Pr
       batch.delete(docRef);
     }
     await batch.commit();
-  } catch (err) {
-    console.error('[Firebase] Error batch deleting recloser logs from Firestore:', err);
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.WRITE, RECLOSER_COLLECTION);
+    }
+    console.error('[Firebase] Error batch deleting recloser logs from Firestore:', err?.message || err);
     throw err;
   }
 }
@@ -223,8 +343,11 @@ export async function seedInitialRecloserLogsToFirestore(initialLogs: RecloserLo
       batch.set(docRef, log, { merge: true });
     }
     await batch.commit();
-  } catch (err) {
-    console.warn('[Firebase] Error seeding initial recloser logs:', err);
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.WRITE, RECLOSER_COLLECTION);
+    }
+    console.warn('[Firebase] Error seeding initial recloser logs:', err?.message || err);
   }
 }
 
