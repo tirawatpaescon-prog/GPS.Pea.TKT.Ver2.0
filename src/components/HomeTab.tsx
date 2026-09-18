@@ -7,7 +7,8 @@ import {
   WifiOff, 
   Sparkles,
   ChevronRight,
-  Lightbulb
+  Lightbulb,
+  Wrench
 } from 'lucide-react';
 import { ActiveTab, RecloserLog } from '../types';
 import peaBotMascotImg from '../assets/images/pea_bot_mascot_1786454271309.jpg';
@@ -156,7 +157,38 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           </div>
         </div>
 
-        {/* FUNCTION 3: จดหน่วย Recloser */}
+        {/* FUNCTION 3: Pratol Work */}
+        <div 
+          id="btn-nav-pratol-work"
+          onClick={() => onNavigateTab('recloser_work')}
+          className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-amber-950/50 to-slate-900 hover:from-amber-950/90 hover:via-orange-950/80 hover:to-slate-900 border border-slate-800 hover:border-amber-400/60 rounded-2xl sm:rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-md hover:shadow-amber-900/30 active:scale-[0.98]"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300 group-hover:bg-amber-400 group-hover:text-slate-950 transition-all shadow-inner shrink-0">
+              <Wrench className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm sm:text-base font-black text-white group-hover:text-amber-300 transition-colors truncate">
+                  Pratol Work
+                </h3>
+                <span className="text-[10px] font-bold text-amber-400 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
+                  ใหม่
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-medium mt-0.5 line-clamp-1">
+                ค้นหาตาม PEA หม้อแปลง • คัดลอกพิกัด Lat, Lng • จัดเรียงเส้นทางคุ้มค่าที่สุดจาก GPS
+              </p>
+            </div>
+
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 group-hover:bg-amber-400 group-hover:text-slate-950 text-slate-400 flex items-center justify-center shrink-0 transition-all">
+              <ChevronRight className="w-4 h-4" />
+            </div>
+          </div>
+        </div>
+
+        {/* FUNCTION 4: จดหน่วย Recloser */}
         <div 
           id="btn-nav-recloser"
           onClick={() => onNavigateTab('recloser')}

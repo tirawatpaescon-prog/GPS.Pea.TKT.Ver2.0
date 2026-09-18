@@ -3,6 +3,7 @@ import Papa from 'papaparse';
 import { SplashScreen } from './components/SplashScreen';
 import { HomeTab } from './components/HomeTab';
 import { StreetlightTab } from './components/StreetlightTab';
+import { RecloserWorkTab } from './components/RecloserWorkTab';
 import { RecloserTab } from './components/RecloserTab';
 import { BottomNavBar } from './components/BottomNavBar';
 import { ActiveTab, RecloserLog } from './types';
@@ -37,7 +38,8 @@ import {
   ExternalLink,
   Filter,
   Zap,
-  Lightbulb
+  Lightbulb,
+  Wrench
 } from 'lucide-react';
 
 import peaBotMascotImg from './assets/images/pea_bot_mascot_1786454271309.jpg';
@@ -506,6 +508,7 @@ const HeaderSection = React.memo(({
               {activeTab === 'home' && 'ระบบงานภาคสนาม PEA.TKT'}
               {activeTab === 'search' && 'ค้นหาพิกัดผู้ใช้ไฟ'}
               {activeTab === 'streetlight' && 'สำรวจโคมไฟส่องสว่าง (106 เครื่อง)'}
+              {activeTab === 'recloser_work' && 'Pratol Work • ค้นหาตาม PEA หม้อแปลง'}
               {activeTab === 'recloser' && 'บันทึกค่า Recloser (7 จุดหลัก)'}
             </p>
           </div>
@@ -550,12 +553,12 @@ const HeaderSection = React.memo(({
         </div>
       </div>
 
-      {/* TOP TAB SWITCHER PILLS (4 TABS) */}
-      <div className="grid grid-cols-4 gap-1 bg-slate-900/95 p-1 rounded-2xl border border-slate-800 text-xs font-bold shadow-inner">
+      {/* TOP TAB SWITCHER PILLS (5 TABS) */}
+      <div className="grid grid-cols-5 gap-1 bg-slate-900/95 p-1 rounded-2xl border border-slate-800 text-[11px] font-bold shadow-inner">
         <button
           type="button"
           onClick={() => onTabChange('home')}
-          className={`flex items-center justify-center gap-1 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+          className={`flex items-center justify-center gap-0.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
             activeTab === 'home'
               ? 'bg-purple-600 text-white font-black shadow-md shadow-purple-600/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -568,7 +571,7 @@ const HeaderSection = React.memo(({
         <button
           type="button"
           onClick={() => onTabChange('search')}
-          className={`flex items-center justify-center gap-1 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+          className={`flex items-center justify-center gap-0.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
             activeTab === 'search'
               ? 'bg-cyan-500 text-slate-950 font-black shadow-md shadow-cyan-500/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -581,7 +584,7 @@ const HeaderSection = React.memo(({
         <button
           type="button"
           onClick={() => onTabChange('streetlight')}
-          className={`flex items-center justify-center gap-1 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+          className={`flex items-center justify-center gap-0.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
             activeTab === 'streetlight'
               ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -593,15 +596,28 @@ const HeaderSection = React.memo(({
 
         <button
           type="button"
+          onClick={() => onTabChange('recloser_work')}
+          className={`flex items-center justify-center gap-0.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+            activeTab === 'recloser_work'
+              ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Wrench className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">Pratol</span>
+        </button>
+
+        <button
+          type="button"
           onClick={() => onTabChange('recloser')}
-          className={`flex items-center justify-center gap-1 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
+          className={`flex items-center justify-center gap-0.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
             activeTab === 'recloser'
               ? 'bg-orange-500 text-slate-950 font-black shadow-md shadow-orange-500/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
           <Zap className="w-3.5 h-3.5 shrink-0" />
-          <span className="truncate">Recloser</span>
+          <span className="truncate">จด RC</span>
         </button>
       </div>
     </header>
@@ -2308,7 +2324,12 @@ export default function App() {
         <StreetlightTab />
       )}
 
-      {/* TAB 4: RECLOSER LOGGING */}
+      {/* TAB 4: RECLOSER WORK */}
+      {activeTab === 'recloser_work' && (
+        <RecloserWorkTab />
+      )}
+
+      {/* TAB 5: RECLOSER LOGGING */}
       {activeTab === 'recloser' && (
         <RecloserTab
           recloserLogs={recloserLogs}

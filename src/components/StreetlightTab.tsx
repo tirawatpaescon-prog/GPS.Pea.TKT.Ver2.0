@@ -25,12 +25,9 @@ import {
   Wifi,
   CheckCheck,
   Navigation,
-  Compass,
   Route,
   LocateFixed,
-  Car,
-  ArrowUp,
-  ArrowDown
+  Car
 } from 'lucide-react';
 import { STREETLIGHT_TRANSFORMERS, STREETLIGHT_VILLAGES, StreetlightTransformer } from '../data/streetlightSurveyData';
 import { StreetlightSurveyStatusType } from '../types';
@@ -152,7 +149,7 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // 6. Route Sequencing State for "กำลังทำ"
-  const [routeSortMode, setRouteSortMode] = useState<RouteSortMode>('nearest_gps');
+  const [routeSortMode, setRouteSortMode] = useState<RouteSortMode>('nearest_from_user');
   const [userLocation, setUserLocation] = useState<TransformerCoord | null>(null);
   const [isLocating, setIsLocating] = useState<boolean>(false);
 
@@ -176,11 +173,18 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
       (err) => {
         setIsLocating(false);
         console.warn('[GPS] Geolocation error:', err);
-        showToast('⚠️ ไม่สามารถอ่านพิกัด GPS ได้ (จัดลำดับตามพิกัดหม้อแปลงลูกแรก)');
+        showToast('⚠️ ไม่สามารถอ่านพิกัด GPS ได้ (กรุณากดเปิดอนุญาตพิกัดตำแหน่ง)');
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
     );
   }, []);
+
+  // Auto-acquire current GPS position when switching to "กำลังทำ" tab
+  useEffect(() => {
+    if (statusFilter === 'in_progress' && !userLocation && !isLocating) {
+      handleGetLocation();
+    }
+  }, [statusFilter, userLocation, isLocating, handleGetLocation]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -865,7 +869,7 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
         </div>
       </div>
 
-      {/* 🧭 IN-PROGRESS ROUTE SEQUENCING CONTROL PANEL (อิงพิกัด Lat/Long) */}
+      {/* 🧭 IN-PROGRESS ROUTE SEQUENCING CONTROL PANEL (อิงตำแหน่งปัจจุบันของผู้ใช้: ใกล้ ➔ ไกล) */}
       {statusFilter === 'in_progress' && (
         <div className="bg-gradient-to-br from-sky-950/70 via-slate-900 to-slate-950 border border-sky-500/40 rounded-3xl p-3.5 sm:p-4 shadow-xl shadow-sky-950/30 space-y-3">
           {/* Header Row */}
@@ -876,18 +880,18 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
               </div>
               <div>
                 <h3 className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
-                  <span>จัดลำดับการเดินทางสำรวจ</span>
+                  <span>จัดลำดับจากจุดที่คุณอยู่ (ใกล้ ➔ ไกล)</span>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-500 text-slate-950 font-black">
-                    {inProgressRoutePlan?.validStopsCount || 0} จุดแวะ
+                    {inProgressRoutePlan?.validStopsCount || 0} เครื่อง
                   </span>
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  คำนวณระยะทางและจัดเส้นทางอิงพิกัด Lat/Long ของหม้อแปลง
+                  คำนวณระยะทางจริงจากตำแหน่ง GPS ของคุณไปยังหม้อแปลงแต่ละเครื่อง
                 </p>
               </div>
             </div>
 
-            {/* GPS Locate Button */}
+            {/* GPS Locate / Refresh Button */}
             <button
               type="button"
               onClick={handleGetLocation}
@@ -900,100 +904,119 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
               title="ดึงพิกัด GPS ตำแหน่งปัจจุบันของคุณ"
             >
               <LocateFixed className={`w-3.5 h-3.5 ${isLocating ? 'animate-spin' : ''}`} />
-              <span>{userLocation ? 'รีเฟรช GPS' : 'ดึงพิกัด GPS'}</span>
+              <span>{isLocating ? 'กำลังค้นหา...' : userLocation ? 'รีเฟรช GPS' : 'ดึงพิกัด GPS'}</span>
             </button>
           </div>
 
-          {/* Stats Bar */}
-          <div className="grid grid-cols-2 gap-2 bg-slate-950/90 p-2.5 rounded-2xl border border-slate-800/90 text-xs">
-            <div className="flex items-center gap-1.5">
-              <Car className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-              <span className="text-slate-400 text-[11px]">ระยะทางรวม:</span>
-              <span className="font-mono font-black text-sky-300">
-                ~{formatDistance(inProgressRoutePlan?.totalDistanceMeters || 0)}
+          {/* User Location Status Bar */}
+          <div
+            className={`p-2.5 rounded-2xl border text-xs flex items-center justify-between gap-2 ${
+              userLocation
+                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                : 'bg-amber-950/40 border-amber-500/40 text-amber-300'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  userLocation
+                    ? 'bg-emerald-400 ring-2 ring-emerald-400/40 animate-pulse'
+                    : 'bg-amber-400'
+                }`}
+              />
+              <span className="text-[11px] font-mono truncate">
+                {userLocation
+                  ? `จุดที่คุณอยู่: ${userLocation.lat.toFixed(5)}, ${userLocation.lng.toFixed(5)}`
+                  : 'ยังไม่ได้ระบุพิกัด GPS ปัจจุบันของคุณ'}
               </span>
             </div>
-            <div className="flex items-center gap-1.5 truncate">
-              <span className={`w-2 h-2 rounded-full shrink-0 ${userLocation ? 'bg-emerald-400 ring-2 ring-emerald-400/40 animate-pulse' : 'bg-amber-400'}`} />
-              <span className="text-[11px] text-slate-300 truncate font-mono">
-                {userLocation
-                  ? `GPS: ${userLocation.lat.toFixed(4)}, ${userLocation.lng.toFixed(4)}`
-                  : 'ยังไม่มีพิกัดคุณ (อิงจากจุดแรก)'}
+
+            {!userLocation && (
+              <button
+                type="button"
+                onClick={handleGetLocation}
+                className="py-1 px-2.5 rounded-xl bg-amber-400 text-slate-950 font-black text-[11px] shrink-0 hover:bg-amber-300 transition-all cursor-pointer active:scale-95"
+              >
+                กดจับพิกัด
+              </button>
+            )}
+          </div>
+
+          {/* Stats Bar: Closest, Farthest & Route Distance */}
+          <div className="grid grid-cols-3 gap-1.5 sm:gap-2 bg-slate-950/90 p-2.5 rounded-2xl border border-slate-800/90 text-xs text-center">
+            <div className="p-1">
+              <span className="text-[10px] text-slate-400 block">ใกล้ที่สุด</span>
+              <span className="font-mono font-black text-emerald-400 text-xs sm:text-sm">
+                {inProgressRoutePlan?.closestDistanceMeters !== null
+                  ? formatDistance(inProgressRoutePlan?.closestDistanceMeters)
+                  : '-'}
+              </span>
+            </div>
+            <div className="p-1 border-x border-slate-800">
+              <span className="text-[10px] text-slate-400 block">ไกลที่สุด</span>
+              <span className="font-mono font-black text-amber-400 text-xs sm:text-sm">
+                {inProgressRoutePlan?.farthestDistanceMeters !== null
+                  ? formatDistance(inProgressRoutePlan?.farthestDistanceMeters)
+                  : '-'}
+              </span>
+            </div>
+            <div className="p-1">
+              <span className="text-[10px] text-slate-400 block">ระยะรวมทั้งสาย</span>
+              <span className="font-mono font-black text-sky-400 text-xs sm:text-sm">
+                ~{formatDistance(inProgressRoutePlan?.totalDistanceMeters || 0)}
               </span>
             </div>
           </div>
 
-          {/* Sorting Pattern Buttons */}
-          <div>
-            <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold mb-1.5 px-0.5">
-              <span>เลือกวิธีการจัดลำดับ:</span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
-              <button
-                type="button"
-                onClick={() => setRouteSortMode('nearest_gps')}
-                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] ${
-                  routeSortMode === 'nearest_gps'
-                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
-                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+          {/* Sequencing Mode Selection (วัดจากจุดปัจจุบัน: ใกล้ไปไกล vs แวะต่อเนื่อง) */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setRouteSortMode('nearest_from_user')}
+              className={`py-2 px-2.5 rounded-2xl font-bold border transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 text-xs text-center ${
+                routeSortMode === 'nearest_from_user'
+                  ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
+                  : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+              }`}
+            >
+              <div className="flex items-center gap-1 font-black">
+                <Navigation className="w-3.5 h-3.5 shrink-0" />
+                <span>ใกล้ ➔ ไกล</span>
+              </div>
+              <span
+                className={`text-[10px] ${
+                  routeSortMode === 'nearest_from_user'
+                    ? 'text-slate-900 font-semibold'
+                    : 'text-slate-400'
                 }`}
               >
-                <Navigation className="w-3 h-3 shrink-0" />
-                <span className="truncate">ใกล้ฉันที่สุด (GPS)</span>
-              </button>
+                เรียงตามระยะห่างจริงจากจุดคุณ
+              </span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => setRouteSortMode('north_south')}
-                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] ${
-                  routeSortMode === 'north_south'
-                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
-                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+            <button
+              type="button"
+              onClick={() => setRouteSortMode('nearest_chain')}
+              className={`py-2 px-2.5 rounded-2xl font-bold border transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 text-xs text-center ${
+                routeSortMode === 'nearest_chain'
+                  ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
+                  : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
+              }`}
+            >
+              <div className="flex items-center gap-1 font-black">
+                <Route className="w-3.5 h-3.5 shrink-0" />
+                <span>แวะต่อกันทีละจุด</span>
+              </div>
+              <span
+                className={`text-[10px] ${
+                  routeSortMode === 'nearest_chain'
+                    ? 'text-slate-900 font-semibold'
+                    : 'text-slate-400'
                 }`}
               >
-                <ArrowDown className="w-3 h-3 shrink-0" />
-                <span className="truncate">เหนือ ➔ ใต้ (Lat)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRouteSortMode('south_north')}
-                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] ${
-                  routeSortMode === 'south_north'
-                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
-                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
-                }`}
-              >
-                <ArrowUp className="w-3 h-3 shrink-0" />
-                <span className="truncate">ใต้ ➔ เหนือ (Lat)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRouteSortMode('west_east')}
-                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] ${
-                  routeSortMode === 'west_east'
-                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
-                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
-                }`}
-              >
-                <Compass className="w-3 h-3 shrink-0" />
-                <span className="truncate">ตก ➔ ออก (Lng)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRouteSortMode('east_west')}
-                className={`py-1.5 px-2 rounded-xl font-bold border transition-all cursor-pointer flex items-center justify-center gap-1 text-[11px] sm:col-span-2 ${
-                  routeSortMode === 'east_west'
-                    ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
-                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800/80'
-                }`}
-              >
-                <Compass className="w-3 h-3 shrink-0" />
-                <span className="truncate">ออก ➔ ตก (Lng)</span>
-              </button>
-            </div>
+                วนต่อจุดใกล้สุดไปเรื่อยๆ
+              </span>
+            </button>
           </div>
 
           {/* Action Buttons: Open multi-stop Google Maps / Copy for LINE */}
@@ -1023,9 +1046,10 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
             <button
               type="button"
               onClick={handleCopyRoutePlan}
-              className="py-2.5 px-3 rounded-2xl bg-slate-950 hover:bg-slate-800 text-sky-300 border border-slate-800 hover:border-sky-500/40 font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm"
+              className="py-2.5 px-3 rounded-2xl bg-slate-950 hover:bg-slate-850 text-sky-300 border border-sky-500/30 hover:border-sky-500 font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95"
+              title="คัดลอกลำดับการเดินทางพร้อมพิกัดเพื่อส่งต่อในกลุ่ม LINE"
             >
-              <Share2 className="w-4 h-4 text-sky-400 shrink-0" />
+              <Share2 className="w-4 h-4 shrink-0 text-sky-400" />
               <span className="truncate">คัดลอกส่ง LINE</span>
             </button>
           </div>
@@ -1077,7 +1101,7 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
                     : 'bg-slate-900/95 border-slate-800 hover:border-amber-500/40'
                 }`}
               >
-                {/* 🧭 IN-PROGRESS ROUTE STOP HEADER (จัดลำดับการเดินทาง) */}
+                {/* 🧭 IN-PROGRESS ROUTE STOP HEADER (จัดลำดับจากจุดที่อยู่ปัจจุบัน: ใกล้ ➔ ไกล) */}
                 {routeStop && (
                   <div className="flex items-center justify-between bg-gradient-to-r from-sky-500/20 to-blue-500/10 border border-sky-500/30 px-3 py-1.5 rounded-2xl mb-2.5">
                     <div className="flex items-center gap-2 min-w-0">
@@ -1085,15 +1109,20 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
                         {routeStop.stopNumber}
                       </span>
                       <span className="text-xs font-black text-sky-200 truncate">
-                        {routeStop.stopNumber === 1 ? 'จุดแวะที่ 1 (จุดเริ่มต้น)' : `จุดแวะที่ ${routeStop.stopNumber}`}
+                        {routeStop.stopNumber === 1 ? 'จุดที่ 1 (ใกล้คุณที่สุด)' : `จุดที่ ${routeStop.stopNumber}`}
                       </span>
                     </div>
 
                     <div className="text-[11px] font-mono font-bold text-sky-300 text-right shrink-0">
-                      {routeStop.stopNumber === 1 && routeStop.distanceFromUserMeters !== null ? (
-                        <span>ห่างจากคุณ {formatDistance(routeStop.distanceFromUserMeters)}</span>
+                      {routeStop.distanceFromUserMeters !== null ? (
+                        <span className="inline-flex items-center gap-1 bg-slate-950/70 px-2 py-0.5 rounded-lg border border-sky-500/25">
+                          <span className="text-slate-400 font-normal text-[10px]">ห่างจากคุณ:</span>
+                          <span className="text-emerald-400 font-black">
+                            {formatDistance(routeStop.distanceFromUserMeters)}
+                          </span>
+                        </span>
                       ) : routeStop.distanceFromPrevMeters !== null ? (
-                        <span>ห่างจากจุดก่อนหน้า: {formatDistance(routeStop.distanceFromPrevMeters)}</span>
+                        <span>ห่างจากจุดก่อน: {formatDistance(routeStop.distanceFromPrevMeters)}</span>
                       ) : null}
                     </div>
                   </div>
@@ -1253,6 +1282,23 @@ export const StreetlightTab: React.FC<StreetlightTabProps> = ({ initialVillage =
                       <span>นำทางไปจุดนี้</span>
                       <ExternalLink className="w-2.5 h-2.5 opacity-60" />
                     </a>
+                  )}
+
+                  {/* Copy Latitude & Longitude Button */}
+                  {item.latitude && item.longitude && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const str = `${item.latitude}, ${item.longitude}`;
+                        navigator.clipboard?.writeText(str);
+                        showToast(`📋 คัดลอกละติจูด ลองติจูด ${item.peano} เรียบร้อย: ${str}`);
+                      }}
+                      className="inline-flex items-center gap-1 py-1 px-2.5 rounded-xl bg-slate-950 hover:bg-amber-500 hover:text-slate-950 text-amber-300 border border-slate-800 hover:border-amber-400 transition-all font-bold cursor-pointer active:scale-95"
+                      title="คัดลอกละติจูด ลองติจูด ของหม้อแปลงลูกนี้"
+                    >
+                      <Copy className="w-3 h-3 text-amber-400" />
+                      <span>คัดลอกพิกัด</span>
+                    </button>
                   )}
 
                   {/* Google Maps search link */}

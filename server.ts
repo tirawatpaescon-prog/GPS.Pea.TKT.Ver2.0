@@ -166,6 +166,7 @@ async function startServer() {
   // --- Central Storage for Streetlight Transformer Survey ---
   const DATA_DIR = path.join(process.cwd(), "data");
   const SURVEY_FILE = path.join(DATA_DIR, "streetlight_status.json");
+  const RECLOSER_WORK_FILE = path.join(DATA_DIR, "recloser_work_status.json");
 
   function ensureDataDir() {
     if (!fs.existsSync(DATA_DIR)) {
@@ -193,6 +194,29 @@ async function startServer() {
       fs.writeFileSync(SURVEY_FILE, JSON.stringify(data, null, 2), "utf-8");
     } catch (err) {
       console.error("Error writing survey status file:", err);
+    }
+  }
+
+  function loadRecloserWorkStatuses(): Record<string, { status: string; updatedAt: number }> {
+    ensureDataDir();
+    if (!fs.existsSync(RECLOSER_WORK_FILE)) {
+      return {};
+    }
+    try {
+      const raw = fs.readFileSync(RECLOSER_WORK_FILE, "utf-8");
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error("Error reading recloser work status file:", err);
+      return {};
+    }
+  }
+
+  function saveRecloserWorkStatuses(data: Record<string, { status: string; updatedAt: number }>) {
+    ensureDataDir();
+    try {
+      fs.writeFileSync(RECLOSER_WORK_FILE, JSON.stringify(data, null, 2), "utf-8");
+    } catch (err) {
+      console.error("Error writing recloser work status file:", err);
     }
   }
 
@@ -246,6 +270,66 @@ async function startServer() {
     try {
       saveSurveyStatuses({});
       res.json({ success: true, message: "Reset all survey statuses to default" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- RECLOSER WORK STATUS API ROUTES ---
+  // GET all Recloser Work statuses
+  app.get("/api/recloser-work/status", (req, res) => {
+    try {
+      const statuses = loadRecloserWorkStatuses();
+      res.json({ success: true, statuses, timestamp: Date.now() });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST update single Recloser Work status
+  app.post("/api/recloser-work/status", (req, res) => {
+    try {
+      const { peano, status, updatedAt } = req.body;
+      if (!peano || !status) {
+        return res.status(400).json({ error: "Missing peano or status" });
+      }
+      const statuses = loadRecloserWorkStatuses();
+      const validStatus =
+        status === "กำลังดำเนินการ" || status === "ดำเนินการเสร็จสิ้น"
+          ? status
+          : "ยังไม่ดำเนินการ";
+      statuses[peano] = {
+        status: validStatus,
+        updatedAt: typeof updatedAt === "number" ? updatedAt : Date.now(),
+      };
+      saveRecloserWorkStatuses(statuses);
+      res.json({ success: true, peano, item: statuses[peano] });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST bulk update Recloser Work statuses
+  app.post("/api/recloser-work/status/bulk", (req, res) => {
+    try {
+      const { statuses } = req.body;
+      if (!statuses || typeof statuses !== "object") {
+        return res.status(400).json({ error: "Invalid statuses payload" });
+      }
+      const current = loadRecloserWorkStatuses();
+      const merged = { ...current, ...statuses };
+      saveRecloserWorkStatuses(merged);
+      res.json({ success: true, count: Object.keys(statuses).length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST reset Recloser Work statuses
+  app.post("/api/recloser-work/status/reset", (req, res) => {
+    try {
+      saveRecloserWorkStatuses({});
+      res.json({ success: true, message: "Reset all recloser work statuses to default" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

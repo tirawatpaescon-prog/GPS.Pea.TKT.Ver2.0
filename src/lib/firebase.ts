@@ -1,7 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import {
-  initializeFirestore,
   getFirestore,
   doc,
   setDoc,
@@ -10,42 +9,19 @@ import {
   onSnapshot,
   getDocs,
   writeBatch,
-  getDocFromServer,
   query,
-  orderBy
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { RecloserLog, StreetlightSurveyStatusType } from '../types';
+import { RecloserLog, StreetlightSurveyStatusType, RecloserWorkStatusType } from '../types';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 export const auth = getAuth(app);
 
-const databaseId =
-  firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-    ? firebaseConfig.firestoreDatabaseId
-    : undefined;
-
-/**
- * Initialize Firestore with experimentalForceLongPolling: true.
- * This prevents the WebChannel streaming drop error:
- * [code=unavailable]: Could not reach Cloud Firestore backend.
- * and ensures flawless connections in browser iframes, mobile networks, and proxy environments.
- */
-let dbInstance;
-try {
-  dbInstance = initializeFirestore(
-    app,
-    {
-      experimentalForceLongPolling: true
-    },
-    databaseId
-  );
-} catch {
-  dbInstance = databaseId ? getFirestore(app, databaseId) : getFirestore(app);
-}
-
-export const db = dbInstance;
+// Initialize Firestore directly with the provisioned database ID per integration specification
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 export enum OperationType {
   CREATE = 'create',
@@ -94,18 +70,6 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
-
-// Initial connection check per Firebase integration requirements
-async function testConnectionOnBoot() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('[Firebase] Client currently operating in offline mode.');
-    }
-  }
-}
-testConnectionOnBoot();
 
 export interface SurveyStatusRecord {
   peano: string;
@@ -230,13 +194,134 @@ export async function bulkSetTransformerSurveyStatuses(
   }
 }
 
+// ==========================================
+// RECLOSER WORK COLLECTION & SYNC METHODS
+// ==========================================
+export const RECLOSER_WORK_COLLECTION = 'recloser_work';
+
+/**
+ * Real-time listener for Recloser Work status.
+ * Automatically synchronizes across all mobile field devices.
+ */
+export function subscribeToRecloserWorkSurveys(
+  onUpdate: (data: Record<string, { status: RecloserWorkStatusType; updatedAt: number }>) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, RECLOSER_WORK_COLLECTION);
+
+  const unsubscribe = onSnapshot(
+    colRef,
+    (snapshot) => {
+      const results: Record<string, { status: RecloserWorkStatusType; updatedAt: number }> = {};
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data && data.peano && data.status) {
+          const validStatus: RecloserWorkStatusType =
+            data.status === 'กำลังดำเนินการ' || data.status === 'ดำเนินการเสร็จสิ้น'
+              ? data.status
+              : 'ยังไม่ดำเนินการ';
+          results[data.peano] = {
+            status: validStatus,
+            updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : Date.now()
+          };
+        }
+      });
+      onUpdate(results);
+    },
+    (err) => {
+      if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+        handleFirestoreError(err, OperationType.GET, RECLOSER_WORK_COLLECTION);
+      }
+      console.warn('[Firebase] Recloser Work onSnapshot operating in cached/offline state:', err?.message || err);
+      if (onError) onError(err);
+    }
+  );
+
+  return unsubscribe;
+}
+
+/**
+ * Updates status for a single transformer in Recloser Work.
+ */
+export async function setRecloserWorkStatus(
+  peano: string,
+  status: RecloserWorkStatusType,
+  village?: string
+): Promise<void> {
+  try {
+    const docRef = doc(db, RECLOSER_WORK_COLLECTION, peano);
+    const updatedAt = Date.now();
+    await setDoc(
+      docRef,
+      {
+        peano,
+        status,
+        updatedAt,
+        ...(village ? { village } : {})
+      },
+      { merge: true }
+    );
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.WRITE, `${RECLOSER_WORK_COLLECTION}/${peano}`);
+    }
+    console.warn('[Firebase] Warning setting recloser work status:', err?.message || err);
+    throw err;
+  }
+}
+
+/**
+ * Batch updates or initializes multiple Recloser Work records.
+ */
+export async function bulkSetRecloserWorkStatuses(
+  statuses: Record<string, { status: RecloserWorkStatusType; updatedAt: number; village?: string }>
+): Promise<void> {
+  const entries = Object.entries(statuses);
+  if (entries.length === 0) return;
+
+  try {
+    const BATCH_SIZE = 400;
+    for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+      const chunk = entries.slice(i, i + BATCH_SIZE);
+      const batch = writeBatch(db);
+
+      for (const [peano, item] of chunk) {
+        const docRef = doc(db, RECLOSER_WORK_COLLECTION, peano);
+        batch.set(
+          docRef,
+          {
+            peano,
+            status: item.status,
+            updatedAt: item.updatedAt || Date.now(),
+            ...(item.village ? { village: item.village } : {})
+          },
+          { merge: true }
+        );
+      }
+
+      await batch.commit();
+    }
+  } catch (err: any) {
+    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.WRITE, RECLOSER_WORK_COLLECTION);
+    }
+    console.warn('[Firebase] Warning bulk updating recloser work statuses:', err?.message || err);
+    throw err;
+  }
+}
+
+
 /**
  * Test connectivity to Firestore
  */
 export async function testFirestoreConnection(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return false;
+  }
   try {
-    const testDoc = doc(db, 'test', 'connection');
-    await getDocFromServer(testDoc);
+    const colRef = collection(db, COLLECTION_NAME);
+    const q = query(colRef, limit(1));
+    await getDocs(q);
     return true;
   } catch (err: any) {
     // If not found or permission check, connection reached server

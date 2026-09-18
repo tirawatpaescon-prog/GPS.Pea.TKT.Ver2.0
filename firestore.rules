@@ -7,6 +7,12 @@ service cloud.firestore {
                    && request.resource.data.status in ['สำรวจแล้ว', 'กำลังดำเนินการ', 'ยังไม่สำรวจ']
                    && request.resource.data.updatedAt is number;
     }
+    match /recloser_work/{peano} {
+      allow read: if true;
+      allow write: if request.resource.data.peano is string
+                   && request.resource.data.status in ['ยังไม่ดำเนินการ', 'กำลังดำเนินการ', 'ดำเนินการเสร็จสิ้น']
+                   && request.resource.data.updatedAt is number;
+    }
     match /recloser_logs/{logId} {
       allow read: if true;
       allow create, update: if request.resource.data.id is string

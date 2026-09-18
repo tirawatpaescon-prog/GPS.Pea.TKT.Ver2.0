@@ -1,11 +1,8 @@
 import { StreetlightTransformer } from '../data/streetlightSurveyData';
 
 export type RouteSortMode =
-  | 'nearest_gps' // ใกล้ฉันที่สุด (Nearest Neighbor จากตำแหน่งปัจจุบัน)
-  | 'north_south' // เหนือ ➔ ใต้ (ตาม Latitude จากมากไปน้อย)
-  | 'south_north' // ใต้ ➔ เหนือ (ตาม Latitude จากน้อยไปมาก)
-  | 'west_east'   // ตะวันตก ➔ ออก (ตาม Longitude จากน้อยไปมาก)
-  | 'east_west';  // ตะวันออก ➔ ตก (ตาม Longitude จากมากไปน้อย)
+  | 'nearest_from_user' // จัดลำดับจากใกล้ ➔ ไกล (วัดตรงจากจุดที่ผู้ใช้อยู่ปัจจุบัน)
+  | 'nearest_chain';    // จัดตามเส้นทางแวะต่อเนื่อง (เริ่มจากจุดปัจจุบัน ➔ แวะจุดใกล้สุดต่อกันไป)
 
 export interface TransformerCoord {
   lat: number;
@@ -27,6 +24,8 @@ export interface RoutePlan {
   validStopsCount: number;
   missingCoordsCount: number;
   googleMapsUrl: string | null;
+  closestDistanceMeters: number | null;
+  farthestDistanceMeters: number | null;
 }
 
 /**
@@ -86,17 +85,17 @@ export function calculateHaversineDistanceMeters(
 export function formatDistance(meters: number | null | undefined): string {
   if (meters === null || meters === undefined || isNaN(meters)) return '-';
   if (meters < 1000) {
-    return `${meters} ม.`;
+    return `${meters.toLocaleString()} ม.`;
   }
-  return `${(meters / 1000).toFixed(1)} กม.`;
+  return `${(meters / 1000).toFixed(2)} กม.`;
 }
 
 /**
- * Sequences a list of in-progress transformers based on their Latitude and Longitude
+ * Sequences a list of in-progress transformers based strictly on current user location (Nearest to Farthest)
  */
 export function sequenceRoute(
   items: StreetlightTransformer[],
-  sortMode: RouteSortMode,
+  sortMode: RouteSortMode = 'nearest_from_user',
   userLocation: TransformerCoord | null
 ): RoutePlan {
   if (!items || items.length === 0) {
@@ -105,92 +104,87 @@ export function sequenceRoute(
       totalDistanceMeters: 0,
       validStopsCount: 0,
       missingCoordsCount: 0,
-      googleMapsUrl: null
+      googleMapsUrl: null,
+      closestDistanceMeters: null,
+      farthestDistanceMeters: null
     };
   }
 
   // Separate items with valid coordinates from items without
-  const withCoords: { item: StreetlightTransformer; coords: TransformerCoord }[] = [];
+  const withCoords: {
+    item: StreetlightTransformer;
+    coords: TransformerCoord;
+    distanceFromUser: number | null;
+  }[] = [];
   const withoutCoords: StreetlightTransformer[] = [];
 
   for (const item of items) {
     const coords = getTransformerCoords(item);
     if (coords) {
-      withCoords.push({ item, coords });
+      const distFromUser = userLocation
+        ? calculateHaversineDistanceMeters(
+            userLocation.lat,
+            userLocation.lng,
+            coords.lat,
+            coords.lng
+          )
+        : null;
+      withCoords.push({ item, coords, distanceFromUser: distFromUser });
     } else {
       withoutCoords.push(item);
     }
   }
 
-  let orderedWithCoords: { item: StreetlightTransformer; coords: TransformerCoord }[] = [];
+  let orderedWithCoords: {
+    item: StreetlightTransformer;
+    coords: TransformerCoord;
+    distanceFromUser: number | null;
+  }[] = [];
 
-  switch (sortMode) {
-    case 'north_south':
-      // Latitude descending (north to south)
-      orderedWithCoords = [...withCoords].sort((a, b) => b.coords.lat - a.coords.lat);
-      break;
+  if (sortMode === 'nearest_chain') {
+    // Continuous Nearest-Neighbor chain starting from user's current location
+    const unvisited = [...withCoords];
+    orderedWithCoords = [];
 
-    case 'south_north':
-      // Latitude ascending (south to north)
-      orderedWithCoords = [...withCoords].sort((a, b) => a.coords.lat - b.coords.lat);
-      break;
+    let currentPoint: TransformerCoord | null = userLocation;
 
-    case 'west_east':
-      // Longitude ascending (west to east)
-      orderedWithCoords = [...withCoords].sort((a, b) => a.coords.lng - b.coords.lng);
-      break;
+    // If no user location, start with the first item
+    if (!currentPoint && unvisited.length > 0) {
+      const first = unvisited.shift()!;
+      orderedWithCoords.push(first);
+      currentPoint = first.coords;
+    }
 
-    case 'east_west':
-      // Longitude descending (east to west)
-      orderedWithCoords = [...withCoords].sort((a, b) => b.coords.lng - a.coords.lng);
-      break;
+    while (unvisited.length > 0 && currentPoint) {
+      let nearestIdx = 0;
+      let minDistance = Infinity;
 
-    case 'nearest_gps':
-    default: {
-      // Nearest Neighbor TSP heuristic chain
-      const unvisited = [...withCoords];
-      orderedWithCoords = [];
-
-      let currentPoint: TransformerCoord | null = userLocation;
-
-      // If no user location, start from the first element (or northernmost)
-      if (!currentPoint && unvisited.length > 0) {
-        // Find northernmost as anchor
-        let anchorIdx = 0;
-        let maxLat = -Infinity;
-        for (let i = 0; i < unvisited.length; i++) {
-          if (unvisited[i].coords.lat > maxLat) {
-            maxLat = unvisited[i].coords.lat;
-            anchorIdx = i;
-          }
+      for (let i = 0; i < unvisited.length; i++) {
+        const dist = calculateHaversineDistanceMeters(
+          currentPoint.lat,
+          currentPoint.lng,
+          unvisited[i].coords.lat,
+          unvisited[i].coords.lng
+        );
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestIdx = i;
         }
-        const first = unvisited.splice(anchorIdx, 1)[0];
-        orderedWithCoords.push(first);
-        currentPoint = first.coords;
       }
 
-      while (unvisited.length > 0 && currentPoint) {
-        let nearestIdx = 0;
-        let minDistance = Infinity;
-
-        for (let i = 0; i < unvisited.length; i++) {
-          const dist = calculateHaversineDistanceMeters(
-            currentPoint.lat,
-            currentPoint.lng,
-            unvisited[i].coords.lat,
-            unvisited[i].coords.lng
-          );
-          if (dist < minDistance) {
-            minDistance = dist;
-            nearestIdx = i;
-          }
-        }
-
-        const next = unvisited.splice(nearestIdx, 1)[0];
-        orderedWithCoords.push(next);
-        currentPoint = next.coords;
-      }
-      break;
+      const next = unvisited.splice(nearestIdx, 1)[0];
+      orderedWithCoords.push(next);
+      currentPoint = next.coords;
+    }
+  } else {
+    // Default: 'nearest_from_user' - จัดลำดับจากใกล้ไปไกลจากจุดที่ผู้ใช้อยู่ปัจจุบัน
+    if (userLocation) {
+      orderedWithCoords = [...withCoords].sort((a, b) => {
+        return (a.distanceFromUser ?? Infinity) - (b.distanceFromUser ?? Infinity);
+      });
+    } else {
+      // If GPS not yet acquired, maintain initial order until GPS is granted
+      orderedWithCoords = [...withCoords];
     }
   }
 
@@ -199,26 +193,14 @@ export function sequenceRoute(
   let cumulativeDistance = 0;
 
   for (let i = 0; i < orderedWithCoords.length; i++) {
-    const { item, coords } = orderedWithCoords[i];
+    const { item, coords, distanceFromUser } = orderedWithCoords[i];
     const stopNumber = i + 1;
 
     let distanceFromPrev: number | null = null;
-    let distanceFromUser: number | null = null;
-
-    if (userLocation) {
-      distanceFromUser = calculateHaversineDistanceMeters(
-        userLocation.lat,
-        userLocation.lng,
-        coords.lat,
-        coords.lng
-      );
-    }
 
     if (i === 0) {
-      if (userLocation) {
-        distanceFromPrev = distanceFromUser;
-        cumulativeDistance += distanceFromUser || 0;
-      }
+      distanceFromPrev = distanceFromUser;
+      cumulativeDistance += distanceFromUser || 0;
     } else {
       const prevCoords = orderedWithCoords[i - 1].coords;
       distanceFromPrev = calculateHaversineDistanceMeters(
@@ -251,6 +233,14 @@ export function sequenceRoute(
       cumulativeDistanceMeters: cumulativeDistance
     });
   }
+
+  // Calculate closest & farthest distances from user
+  const validDistances = stops
+    .map((s) => s.distanceFromUserMeters)
+    .filter((d): d is number => d !== null && !isNaN(d));
+
+  const closestDistance = validDistances.length > 0 ? Math.min(...validDistances) : null;
+  const farthestDistance = validDistances.length > 0 ? Math.max(...validDistances) : null;
 
   // Generate Google Maps Multi-stop directions URL
   let googleMapsUrl: string | null = null;
@@ -295,7 +285,9 @@ export function sequenceRoute(
     totalDistanceMeters: cumulativeDistance,
     validStopsCount: withCoords.length,
     missingCoordsCount: withoutCoords.length,
-    googleMapsUrl
+    googleMapsUrl,
+    closestDistanceMeters: closestDistance,
+    farthestDistanceMeters: farthestDistance
   };
 }
 
@@ -305,14 +297,11 @@ export function sequenceRoute(
 export function generateRouteSummaryText(
   plan: RoutePlan,
   villageName: string,
-  sortMode: RouteSortMode
+  sortMode: RouteSortMode = 'nearest_from_user'
 ): string {
   const modeNames: Record<RouteSortMode, string> = {
-    nearest_gps: 'ระยะทางใกล้สุด (GPS Nearest)',
-    north_south: 'เหนือ ➔ ใต้ (ตามละติจูด)',
-    south_north: 'ใต้ ➔ เหนือ (ตามละติจูด)',
-    west_east: 'ตะวันตก ➔ ออก (ตามลองจิจูด)',
-    east_west: 'ตะวันออก ➔ ตก (ตามลองจิจูด)'
+    nearest_from_user: 'เรียงจากจุดที่คุณอยู่ (ใกล้ ➔ ไกล)',
+    nearest_chain: 'เส้นทางแวะต่อเนื่อง (แวะจุดใกล้สุดต่อกันไป)'
   };
 
   const now = new Date();
@@ -322,28 +311,32 @@ export function generateRouteSummaryText(
     year: 'numeric'
   });
 
-  let text = `⚡ ลำดับเส้นทางสำรวจโคมไฟ (กำลังทำ) ⚡\n`;
+  let text = `⚡ ลำดับสำรวจโคมไฟ (จัดเรียงจากจุดที่อยู่ปัจจุบัน: ใกล้ ➔ ไกล) ⚡\n`;
   text += `📅 วันที่: ${dateStr}\n`;
   if (villageName && villageName !== 'all') {
     text += `🏘️ หมู่บ้าน: ${villageName}\n`;
   }
-  text += `🧭 จัดลำดับ: ${modeNames[sortMode]}\n`;
+  text += `🧭 ลำดับ: ${modeNames[sortMode]}\n`;
   text += `🔢 รวมหม้อแปลง: ${plan.stops.length} เครื่อง`;
-  if (plan.totalDistanceMeters > 0) {
-    text += ` (ระยะทางรวม ~${formatDistance(plan.totalDistanceMeters)})`;
+  if (plan.closestDistanceMeters !== null) {
+    text += `\n📍 ใกล้ที่สุด: ${formatDistance(plan.closestDistanceMeters)}`;
+  }
+  if (plan.farthestDistanceMeters !== null) {
+    text += ` | ไกลที่สุด: ${formatDistance(plan.farthestDistanceMeters)}`;
   }
   text += `\n─────────────────────\n`;
 
   plan.stops.forEach((stop) => {
     const tr = stop.transformer;
     const isFirst = stop.stopNumber === 1;
-    const prefix = isFirst ? '🚩 จุดที่ 1 (เริ่มต้น)' : `➡️ จุดที่ ${stop.stopNumber}`;
+    const prefix = isFirst ? '🚩 จุดที่ 1 (ใกล้สุด)' : `➡️ จุดที่ ${stop.stopNumber}`;
 
     text += `${prefix}: ${tr.peano} (${tr.kva} kVA)\n`;
     text += `   📍 ${tr.location}\n`;
-    if (stop.distanceFromPrevMeters !== null) {
-      const label = isFirst ? 'ห่างจากจุดคุณ' : 'ระยะจากจุดก่อน';
-      text += `   📏 ${label}: ${formatDistance(stop.distanceFromPrevMeters)}\n`;
+    if (stop.distanceFromUserMeters !== null) {
+      text += `   📏 ห่างจากจุดคุณ: ${formatDistance(stop.distanceFromUserMeters)}\n`;
+    } else if (stop.distanceFromPrevMeters !== null) {
+      text += `   📏 ระยะห่าง: ${formatDistance(stop.distanceFromPrevMeters)}\n`;
     }
     if (stop.coords) {
       text += `   🗺️ พิกัด: ${stop.coords.lat.toFixed(6)}, ${stop.coords.lng.toFixed(6)}\n`;
@@ -353,8 +346,72 @@ export function generateRouteSummaryText(
 
   if (plan.googleMapsUrl) {
     text += `─────────────────────\n`;
-    text += `🗺️ แผนที่นำทางทั้งเส้นทาง:\n${plan.googleMapsUrl}`;
+    text += `🗺️ นำทางด้วย Google Maps:\n${plan.googleMapsUrl}`;
   }
 
   return text;
 }
+
+/**
+ * Generates a formatted text summary specifically for Recloser Work field teams
+ */
+export function generateRecloserWorkSummaryText(
+  plan: RoutePlan,
+  villageName: string,
+  sortMode: RouteSortMode = 'nearest_from_user'
+): string {
+  const modeNames: Record<RouteSortMode, string> = {
+    nearest_from_user: 'เรียงตามระยะห่างจริงจากจุดคุณ (ใกล้ ➔ ไกล)',
+    nearest_chain: 'เส้นทางคุ้มค่าที่สุด (แวะจุดใกล้สุดต่อกันไป)'
+  };
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  });
+
+  let text = `⚡ แผนปฏิบัติงาน Pratol Work (จัดลำดับจากจุดที่อยู่ปัจจุบัน: ใกล้ ➔ ไกล) ⚡\n`;
+  text += `📅 วันที่: ${dateStr}\n`;
+  if (villageName && villageName !== 'all') {
+    text += `🏘️ หมู่บ้าน: ${villageName}\n`;
+  }
+  text += `🧭 รูปแบบเส้นทาง: ${modeNames[sortMode]}\n`;
+  text += `🔢 จำนวนหม้อแปลงที่กำลังดำเนินการ: ${plan.stops.length} เครื่อง`;
+  if (plan.closestDistanceMeters !== null) {
+    text += `\n📍 ใกล้ที่สุด: ${formatDistance(plan.closestDistanceMeters)}`;
+  }
+  if (plan.farthestDistanceMeters !== null) {
+    text += ` | ไกลที่สุด: ${formatDistance(plan.farthestDistanceMeters)}`;
+  }
+  text += `\n🛣️ ระยะทางรวมทั้งเส้น: ${formatDistance(plan.totalDistanceMeters)}`;
+  text += `\n─────────────────────\n`;
+
+  plan.stops.forEach((stop) => {
+    const tr = stop.transformer;
+    const isFirst = stop.stopNumber === 1;
+    const prefix = isFirst ? '🚩 จุดที่ 1 (ใกล้คุณที่สุด)' : `➡️ จุดที่ ${stop.stopNumber}`;
+
+    text += `${prefix}: PEA ${tr.peano} (${tr.kva} kVA)\n`;
+    text += `   📍 ${tr.location}\n`;
+    if (stop.distanceFromUserMeters !== null) {
+      text += `   📏 ห่างจากคุณ: ${formatDistance(stop.distanceFromUserMeters)}\n`;
+    }
+    if (stop.distanceFromPrevMeters !== null && !isFirst) {
+      text += `   🚗 ห่างจากจุดก่อนหน้า: ${formatDistance(stop.distanceFromPrevMeters)}\n`;
+    }
+    if (stop.coords) {
+      text += `   🗺️ พิกัด: ${stop.coords.lat.toFixed(6)}, ${stop.coords.lng.toFixed(6)}\n`;
+    }
+    text += `\n`;
+  });
+
+  if (plan.googleMapsUrl) {
+    text += `─────────────────────\n`;
+    text += `🗺️ เปิดแผนที่นำทางทั้งเส้น (Google Maps):\n${plan.googleMapsUrl}`;
+  }
+
+  return text;
+}
+
