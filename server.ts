@@ -295,7 +295,7 @@ async function startServer() {
       }
       const statuses = loadRecloserWorkStatuses();
       const validStatus =
-        status === "กำลังดำเนินการ" || status === "ดำเนินการเสร็จสิ้น"
+        status === "กำลังดำเนินการ" || status === "รอนำเข้าระบบ" || status === "ดำเนินการเสร็จสิ้น"
           ? status
           : "ยังไม่ดำเนินการ";
       statuses[peano] = {

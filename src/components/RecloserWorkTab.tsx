@@ -295,11 +295,13 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
   const stats = useMemo(() => {
     let pending = 0;
     let inProgress = 0;
+    let waitingImport = 0;
     let completed = 0;
 
     STREETLIGHT_TRANSFORMERS.forEach((tr) => {
       const st = statusMap[tr.peano]?.status || 'ยังไม่ดำเนินการ';
       if (st === 'ดำเนินการเสร็จสิ้น') completed++;
+      else if (st === 'รอนำเข้าระบบ') waitingImport++;
       else if (st === 'กำลังดำเนินการ') inProgress++;
       else pending++;
     });
@@ -307,7 +309,7 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
     const total = STREETLIGHT_TRANSFORMERS.length;
     const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
-    return { total, pending, inProgress, completed, progressPercent };
+    return { total, pending, inProgress, waitingImport, completed, progressPercent };
   }, [statusMap]);
 
   // 7. Filter items by Search and Village
@@ -405,16 +407,16 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
         </div>
 
         {/* Status Counters Bar */}
-        <div className="mt-3.5 pt-3 border-t border-amber-500/20 grid grid-cols-3 gap-2 text-center">
+        <div className="mt-3.5 pt-3 border-t border-amber-500/20 grid grid-cols-4 gap-1.5 text-center">
           <div 
             onClick={() => setActiveFilter('ยังไม่ดำเนินการ')}
-            className={`p-2 rounded-2xl border transition-all cursor-pointer ${
+            className={`p-1.5 sm:p-2 rounded-2xl border transition-all cursor-pointer ${
               activeFilter === 'ยังไม่ดำเนินการ'
                 ? 'bg-slate-800/90 border-sky-400/50 shadow-md ring-1 ring-sky-400/40'
                 : 'bg-slate-900/70 border-slate-800/80 hover:bg-slate-800/60'
             }`}
           >
-            <div className="text-[10px] font-bold text-sky-300 flex items-center justify-center gap-1">
+            <div className="text-[9.5px] sm:text-[10px] font-bold text-sky-300 flex items-center justify-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
               <span>1. ยังไม่เริ่ม</span>
             </div>
@@ -425,13 +427,13 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
 
           <div 
             onClick={() => setActiveFilter('กำลังดำเนินการ')}
-            className={`p-2 rounded-2xl border transition-all cursor-pointer ${
+            className={`p-1.5 sm:p-2 rounded-2xl border transition-all cursor-pointer ${
               activeFilter === 'กำลังดำเนินการ'
                 ? 'bg-amber-950/60 border-amber-400/60 shadow-md ring-1 ring-amber-400/40'
                 : 'bg-slate-900/70 border-slate-800/80 hover:bg-slate-800/60'
             }`}
           >
-            <div className="text-[10px] font-bold text-amber-300 flex items-center justify-center gap-1">
+            <div className="text-[9.5px] sm:text-[10px] font-bold text-amber-300 flex items-center justify-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
               <span>2. กำลังทำ</span>
             </div>
@@ -441,16 +443,33 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
           </div>
 
           <div 
+            onClick={() => setActiveFilter('รอนำเข้าระบบ')}
+            className={`p-1.5 sm:p-2 rounded-2xl border transition-all cursor-pointer ${
+              activeFilter === 'รอนำเข้าระบบ'
+                ? 'bg-purple-950/60 border-purple-400/60 shadow-md ring-1 ring-purple-400/40'
+                : 'bg-slate-900/70 border-slate-800/80 hover:bg-slate-800/60'
+            }`}
+          >
+            <div className="text-[9.5px] sm:text-[10px] font-bold text-purple-300 flex items-center justify-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+              <span>3. รอนำเข้า</span>
+            </div>
+            <div className="text-base font-black text-purple-300 font-mono mt-0.5">
+              {stats.waitingImport}
+            </div>
+          </div>
+
+          <div 
             onClick={() => setActiveFilter('ดำเนินการเสร็จสิ้น')}
-            className={`p-2 rounded-2xl border transition-all cursor-pointer ${
+            className={`p-1.5 sm:p-2 rounded-2xl border transition-all cursor-pointer ${
               activeFilter === 'ดำเนินการเสร็จสิ้น'
                 ? 'bg-emerald-950/60 border-emerald-400/60 shadow-md ring-1 ring-emerald-400/40'
                 : 'bg-slate-900/70 border-slate-800/80 hover:bg-slate-800/60'
             }`}
           >
-            <div className="text-[10px] font-bold text-emerald-300 flex items-center justify-center gap-1">
+            <div className="text-[9.5px] sm:text-[10px] font-bold text-emerald-300 flex items-center justify-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>3. เสร็จสิ้น</span>
+              <span>4. เสร็จสิ้น</span>
             </div>
             <div className="text-base font-black text-emerald-300 font-mono mt-0.5">
               {stats.completed}
@@ -613,7 +632,7 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
         </div>
 
         {/* Status Filter Segmented Buttons */}
-        <div className="grid grid-cols-4 gap-1 p-1 bg-slate-950/80 rounded-2xl border border-slate-800/80 text-[11px] font-bold">
+        <div className="grid grid-cols-5 gap-1 p-1 bg-slate-950/80 rounded-2xl border border-slate-800/80 text-[10px] sm:text-[11px] font-bold">
           <button
             id="filter-recloser-all"
             type="button"
@@ -636,7 +655,7 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            1. ยังไม่เริ่ม ({stats.pending})
+            1.ยังไม่เริ่ม ({stats.pending})
           </button>
           <button
             id="filter-recloser-inprogress"
@@ -648,7 +667,19 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            2. กำลังทำ ({stats.inProgress})
+            2.กำลังทำ ({stats.inProgress})
+          </button>
+          <button
+            id="filter-recloser-waiting-import"
+            type="button"
+            onClick={() => setActiveFilter('รอนำเข้าระบบ')}
+            className={`py-1.5 rounded-xl transition-all cursor-pointer ${
+              activeFilter === 'รอนำเข้าระบบ'
+                ? 'bg-purple-500/20 text-purple-300 border border-purple-400/40 shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            3.รอนำเข้า ({stats.waitingImport})
           </button>
           <button
             id="filter-recloser-completed"
@@ -660,7 +691,7 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            3. เสร็จ ({stats.completed})
+            4.เสร็จ ({stats.completed})
           </button>
         </div>
       </div>
@@ -832,6 +863,8 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                 className={`rounded-3xl border p-4 transition-all duration-200 shadow-md ${
                   currentStatus === 'ดำเนินการเสร็จสิ้น'
                     ? 'bg-slate-900/90 border-emerald-500/30 hover:border-emerald-500/50'
+                    : currentStatus === 'รอนำเข้าระบบ'
+                    ? 'bg-gradient-to-br from-slate-900 via-purple-950/30 to-slate-950 border-purple-500/50 hover:border-purple-400 shadow-purple-950/20'
                     : currentStatus === 'กำลังดำเนินการ'
                     ? 'bg-gradient-to-br from-slate-900 via-amber-950/30 to-slate-950 border-amber-500/50 hover:border-amber-400 shadow-amber-950/20'
                     : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
@@ -877,6 +910,24 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                       <span className="text-[10px] text-slate-400">
                         {item.phase}
                       </span>
+                      {currentStatus === 'กำลังดำเนินการ' && (
+                        <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                          2. กำลังดำเนินการ
+                        </span>
+                      )}
+                      {currentStatus === 'รอนำเข้าระบบ' && (
+                        <span className="text-[10px] font-bold text-purple-300 bg-purple-500/20 border border-purple-500/40 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                          3. รอนำเข้าระบบ
+                        </span>
+                      )}
+                      {currentStatus === 'ดำเนินการเสร็จสิ้น' && (
+                        <span className="text-[10px] font-bold text-emerald-300 bg-emerald-500/20 border border-emerald-500/40 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                          4. ดำเนินการเสร็จสิ้น
+                        </span>
+                      )}
                     </div>
 
                     <h4 className="text-sm font-bold text-white leading-snug mt-1">
@@ -974,55 +1025,73 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                   </div>
                 )}
 
-                {/* 3 STATUS ACTION BUTTONS (1 ยังไม่ดำเนินการ, 2 กำลังดำเนินการ, 3 ดำเนินการเสร็จสิ้น) */}
+                {/* 4 STATUS ACTION BUTTONS (ยังไม่ดำเนินการ, กำลังดำเนินการ, รอนำเข้าระบบ, ดำเนินการเสร็จสิ้น) */}
                 <div className="mt-3 pt-3 border-t border-slate-800/80">
                   <div className="text-[10px] font-bold text-slate-400 mb-1.5 flex items-center justify-between">
-                    <span>ปรับสถานะการดำเนินงาน:</span>
+                    <span>ปรับสถานะการดำเนินงาน (1 ➔ 2 ➔ 3 ➔ 4):</span>
                     <span className="text-[10px] font-mono text-slate-500">
                       {statusMap[item.peano]?.updatedAt ? new Date(statusMap[item.peano].updatedAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : ''}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {/* STATUS 1: ยังไม่ดำเนินการ */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                    {/* STATUS : ยังไม่ดำเนินการ */}
                     <button
+                      id={`btn-status-pending-${item.peano}`}
                       type="button"
                       onClick={() => handleStatusChange(item.peano, 'ยังไม่ดำเนินการ', item.village)}
-                      className={`py-2 px-1.5 rounded-2xl text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
+                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
                         currentStatus === 'ยังไม่ดำเนินการ'
                           ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
                           : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-sky-300'
                       }`}
                     >
-                      <span className="text-[10px] opacity-80 font-mono">1</span>
+                      <span className="text-[10px] opacity-80 font-mono"></span>
                       <span className="truncate max-w-full">ยังไม่ดำเนินการ</span>
                     </button>
 
-                    {/* STATUS 2: กำลังดำเนินการ */}
+                    {/* STATUS : กำลังดำเนินการ */}
                     <button
+                      id={`btn-status-inprogress-${item.peano}`}
                       type="button"
                       onClick={() => handleStatusChange(item.peano, 'กำลังดำเนินการ', item.village)}
-                      className={`py-2 px-1.5 rounded-2xl text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
+                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
                         currentStatus === 'กำลังดำเนินการ'
                           ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-md'
                           : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-amber-300'
                       }`}
                     >
-                      <span className="text-[10px] opacity-80 font-mono">2</span>
+                      <span className="text-[10px] opacity-80 font-mono"></span>
                       <span className="truncate max-w-full">กำลังดำเนินการ</span>
                     </button>
 
-                    {/* STATUS 3: ดำเนินการเสร็จสิ้น */}
+                    {/* STATUS : รอนำเข้าระบบ */}
                     <button
+                      id={`btn-status-waiting-import-${item.peano}`}
+                      type="button"
+                      onClick={() => handleStatusChange(item.peano, 'รอนำเข้าระบบ', item.village)}
+                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
+                        currentStatus === 'รอนำเข้าระบบ'
+                          ? 'bg-purple-600 text-white border-purple-400 font-black shadow-md shadow-purple-900/30'
+                          : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-purple-300'
+                      }`}
+                    >
+                      <span className="text-[10px] opacity-80 font-mono"></span>
+                      <span className="truncate max-w-full">รอนำเข้าระบบ</span>
+                    </button>
+
+                    {/* STATUS : ดำเนินการเสร็จสิ้น */}
+                    <button
+                      id={`btn-status-completed-${item.peano}`}
                       type="button"
                       onClick={() => handleStatusChange(item.peano, 'ดำเนินการเสร็จสิ้น', item.village)}
-                      className={`py-2 px-1.5 rounded-2xl text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
+                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
                         currentStatus === 'ดำเนินการเสร็จสิ้น'
                           ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black shadow-md'
                           : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-emerald-300'
                       }`}
                     >
-                      <span className="text-[10px] opacity-80 font-mono">3</span>
+                      <span className="text-[10px] opacity-80 font-mono"></span>
                       <span className="truncate max-w-full">ดำเนินการเสร็จสิ้น</span>
                     </button>
                   </div>

@@ -217,7 +217,7 @@ export function subscribeToRecloserWorkSurveys(
         const data = docSnap.data();
         if (data && data.peano && data.status) {
           const validStatus: RecloserWorkStatusType =
-            data.status === 'กำลังดำเนินการ' || data.status === 'ดำเนินการเสร็จสิ้น'
+            data.status === 'กำลังดำเนินการ' || data.status === 'รอนำเข้าระบบ' || data.status === 'ดำเนินการเสร็จสิ้น'
               ? data.status
               : 'ยังไม่ดำเนินการ';
           results[data.peano] = {

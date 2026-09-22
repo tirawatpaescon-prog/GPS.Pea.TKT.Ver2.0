@@ -10,7 +10,7 @@ service cloud.firestore {
     match /recloser_work/{peano} {
       allow read: if true;
       allow write: if request.resource.data.peano is string
-                   && request.resource.data.status in ['ยังไม่ดำเนินการ', 'กำลังดำเนินการ', 'ดำเนินการเสร็จสิ้น']
+                   && request.resource.data.status in ['ยังไม่ดำเนินการ', 'กำลังดำเนินการ', 'รอนำเข้าระบบ', 'ดำเนินการเสร็จสิ้น']
                    && request.resource.data.updatedAt is number;
     }
     match /recloser_logs/{logId} {
