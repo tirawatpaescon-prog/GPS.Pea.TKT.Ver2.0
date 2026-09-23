@@ -7,6 +7,7 @@ import { RecloserWorkTab } from './components/RecloserWorkTab';
 import { RecloserTab } from './components/RecloserTab';
 import { BottomNavBar } from './components/BottomNavBar';
 import { ActiveTab, RecloserLog } from './types';
+import { startBackgroundHeartbeat, stopBackgroundHeartbeat } from './lib/backgroundKeepAlive';
 import {
   fetchRecloserLogsFromFirestore,
   saveRecloserLogToFirestore,
@@ -195,6 +196,15 @@ export const isExactHouseMatch = (item: IndexedRecord, parsed: HouseQueryParams)
   return true;
 };
 
+// Strip Thai name prefixes (นาย, นาง, นางสาว, น.ส., etc.)
+const stripThaiNamePrefix = (name: string): string => {
+  if (!name) return '';
+  return name
+    .trim()
+    .replace(/^(นาย|นางสาว|นาง|น\.ส\.|ด\.ช\.|ด\.ญ\.|พระครู|พระ|คุณ|หจก\.|บริษัท|บจก\.)\s*/i, '')
+    .trim();
+};
+
 // Phonetic & Vowel-insensitive Thai skeleton generator
 const getThaiPhoneticSkeleton = (text: string): string => {
   if (!text) return '';
@@ -265,56 +275,67 @@ const calculateThaiSimilarity = (
     return 0;
   }
 
-  // 2. Thai Phonetic / Vowel Skeleton Comparison
+  // 2. Thai Phonetic / Vowel Skeleton Comparison for full query string
   const qSkel = getThaiPhoneticSkeleton(qNorm);
-
-  if (qSkel.length >= 2) {
-    if (fSkel.length >= 2 && fSkel.includes(qSkel)) {
+  if (qSkel.length >= 3 && fSkel.length >= 3) {
+    if (fSkel === qSkel) return 99;
+    if (fSkel.includes(qSkel)) {
       const ratio = qSkel.length / Math.max(qSkel.length, fSkel.length);
-      return Math.round(95 + ratio * 5);
-    }
-    if (rowSkel.length >= 2 && rowSkel.includes(qSkel)) {
-      const ratio = qSkel.length / Math.max(qSkel.length, rowSkel.length);
-      return Math.round(95 + ratio * 5);
+      return Math.round(95 + ratio * 4);
     }
   }
 
-  // 3. Word token comparison
+  // 3. Multi-token comparison: EVERY query token must match a token in fullName!
   const qTokens = qNorm.split(/\s+/).filter(Boolean);
-  const fTokens = fNorm.split(/\s+/).filter(Boolean);
+  const fTokens = stripThaiNamePrefix(fNorm).split(/\s+/).filter(Boolean);
 
-  let bestMatch = 0;
+  if (qTokens.length === 0 || fTokens.length === 0) return 0;
+
+  let totalMatchedScore = 0;
 
   for (const qTok of qTokens) {
+    if (qTok.length < 2) return 0; // Skip noisy 1-character tokens
     const qTokSkel = getThaiPhoneticSkeleton(qTok);
-    if (qTokSkel.length < 2) continue;
+
+    let bestTokScore = 0;
 
     for (const fTok of fTokens) {
       const fTokSkel = getThaiPhoneticSkeleton(fTok);
-      if (fTokSkel.length < 2) continue;
 
-      if (Math.abs(qTokSkel.length - fTokSkel.length) > 3) continue;
-
-      if (fTokSkel === qTokSkel) {
-        if (98 > bestMatch) bestMatch = 98;
-      } else if (fTokSkel.includes(qTokSkel) || qTokSkel.includes(fTokSkel)) {
-        const lenDiff = Math.abs(fTokSkel.length - qTokSkel.length);
-        const score = Math.max(95, 99 - lenDiff * 2);
-        if (score > bestMatch) bestMatch = score;
-      } else {
-        const dist = getLevenshteinDistance(qTokSkel, fTokSkel);
-        const maxLen = Math.max(qTokSkel.length, fTokSkel.length);
-        if (maxLen > 0) {
-          const sim = Math.round((1 - dist / maxLen) * 100);
-          if (sim >= 95 && sim > bestMatch) {
-            bestMatch = sim;
-          }
+      // Exact match
+      if (fTok === qTok) {
+        bestTokScore = Math.max(bestTokScore, 100);
+        continue;
+      }
+      // Prefix match (e.g. "นน" starts "นนทบุรี", "นนทะบุตร")
+      if (qTok.length >= 2 && fTok.startsWith(qTok)) {
+        bestTokScore = Math.max(bestTokScore, 98);
+        continue;
+      }
+      // Substring match only if length >= 3
+      if (qTok.length >= 3 && fTok.includes(qTok)) {
+        bestTokScore = Math.max(bestTokScore, 96);
+        continue;
+      }
+      // Phonetic skeleton match
+      if (qTokSkel.length >= 3 && fTokSkel.length >= 3) {
+        if (fTokSkel === qTokSkel) {
+          bestTokScore = Math.max(bestTokScore, 96);
+        } else if (fTokSkel.startsWith(qTokSkel)) {
+          bestTokScore = Math.max(bestTokScore, 95);
         }
       }
     }
+
+    // CRITICAL: If ANY query token cannot be matched, whole query fails!
+    if (bestTokScore === 0) {
+      return 0;
+    }
+
+    totalMatchedScore += bestTokScore;
   }
 
-  return bestMatch;
+  return Math.round(totalMatchedScore / qTokens.length);
 };
 
 // Resolve latitude & longitude
@@ -508,7 +529,7 @@ const HeaderSection = React.memo(({
               {activeTab === 'home' && 'ระบบงานภาคสนาม PEA.TKT'}
               {activeTab === 'search' && 'ค้นหาพิกัดผู้ใช้ไฟ'}
               {activeTab === 'streetlight' && 'สำรวจโคมไฟส่องสว่าง (106 เครื่อง)'}
-              {activeTab === 'recloser_work' && 'Pratol Work • ค้นหาตาม PEA หม้อแปลง'}
+              {(activeTab === 'patrol_work' || activeTab === 'recloser_work') && 'Patrol Work • ค้นหาตาม PEA หม้อแปลง'}
               {activeTab === 'recloser' && 'บันทึกค่า Recloser (7 จุดหลัก)'}
             </p>
           </div>
@@ -596,15 +617,15 @@ const HeaderSection = React.memo(({
 
         <button
           type="button"
-          onClick={() => onTabChange('recloser_work')}
+          onClick={() => onTabChange('patrol_work')}
           className={`flex items-center justify-center gap-0.5 py-1.5 sm:py-2 rounded-xl transition-all cursor-pointer select-none ${
-            activeTab === 'recloser_work'
+            activeTab === 'patrol_work' || activeTab === 'recloser_work'
               ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/30'
               : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
           }`}
         >
           <Wrench className="w-3.5 h-3.5 shrink-0" />
-          <span className="truncate">Pratol</span>
+          <span className="truncate">Patrol</span>
         </button>
 
         <button
@@ -660,31 +681,31 @@ const SyncStatusBar = React.memo(({
 // 3. 3D Mascot Banner Component
 const PeaBot3DMascot = React.memo(({ isThinking }: { isThinking: boolean }) => {
   return (
-    <div className="bg-gradient-to-r from-purple-900/60 via-slate-900 to-indigo-900/60 border border-purple-500/30 rounded-2xl p-2.5 mb-1 flex items-center gap-2.5 relative overflow-hidden shadow-lg backdrop-blur-sm group shrink-0">
-      <div className={`absolute -right-6 -bottom-6 w-24 h-24 rounded-full blur-xl transition-all duration-500 ${isThinking ? 'bg-amber-500/40 animate-pulse scale-125' : 'bg-sky-500/20'}`} />
+    <div className="bg-gradient-to-r from-purple-950/40 via-slate-900 to-indigo-950/40 border border-purple-500/20 rounded-xl p-2 mb-1 flex items-center gap-2 relative overflow-hidden shadow-xs backdrop-blur-sm group shrink-0">
+      <div className={`absolute -right-6 -bottom-6 w-20 h-20 rounded-full blur-xl transition-all duration-500 ${isThinking ? 'bg-amber-500/30 animate-pulse scale-125' : 'bg-sky-500/10'}`} />
       
       <div className="relative shrink-0">
-        <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl overflow-hidden border-2 transition-all duration-300 shadow-lg ${isThinking ? 'border-amber-400 animate-bounce scale-105' : 'border-sky-400 group-hover:scale-105'}`}>
+        <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg overflow-hidden border transition-all duration-300 shadow-xs ${isThinking ? 'border-amber-400 animate-bounce' : 'border-sky-400/80 group-hover:scale-105'}`}>
           <img 
             src={peaBotMascotImg} 
             alt="3D PEA Bot Mascot" 
             className={`w-full h-full object-cover transition-all duration-300 ${isThinking ? 'brightness-110 contrast-125' : ''}`}
           />
         </div>
-        <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border text-[9px] shadow-sm ${isThinking ? 'bg-amber-400 border-yellow-200 text-slate-950 animate-spin' : 'bg-emerald-400 border-emerald-200 text-slate-950 animate-pulse'}`}>
+        <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full flex items-center justify-center border text-[7px] shadow-xs ${isThinking ? 'bg-amber-400 border-yellow-200 text-slate-950 animate-spin' : 'bg-emerald-400 border-emerald-200 text-slate-950'}`}>
           ⚡
         </div>
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <span className="text-xs font-black text-amber-300 font-display">น้อง PEA Bot 3D</span>
-          <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${isThinking ? 'bg-amber-400/30 text-amber-300 animate-pulse border border-amber-400/50' : 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/30'}`}>
-            {isThinking ? 'กำลังค้นหา...' : 'พร้อมลุย!'}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-black text-amber-300 font-display">PEA Bot 3D</span>
+          <span className={`text-[8px] px-1.5 py-0.2 rounded-full font-bold ${isThinking ? 'bg-amber-400/30 text-amber-300 animate-pulse border border-amber-400/50' : 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/30'}`}>
+            {isThinking ? 'ค้นหา...' : 'พร้อมใช้งาน'}
           </span>
         </div>
-        <p className="text-[11px] font-medium text-slate-200 leading-snug truncate">
-          {isThinking ? 'กำลังสแกนหาพิกัดให้อยู่คร้าบ แป๊บเดียวนะ! ⚡' : 'พิมพ์ CA, Meter หรือชื่อบ้านเลขที่ส่งมาเลยครับ! 😎'}
+        <p className="text-[10px] text-slate-300 truncate leading-tight">
+          {isThinking ? 'กำลังสแกนหาพิกัดให้อยู่คร้าบ แป๊บเดียว...' : 'พิมพ์ CA, Meter หรือชื่อบ้านเลขที่ส่งมาได้เลยครับ'}
         </p>
       </div>
     </div>
@@ -891,106 +912,121 @@ const ResultCard = React.memo(({ item, onOpenMap, onShare }: ResultCardProps) =>
   }, [textToCopyAndShare]);
 
   return (
-    <div className="bg-slate-900 border border-slate-700/90 rounded-2xl p-3 text-slate-100 shadow-md text-xs space-y-2">
-      <h4 className="font-bold text-sky-300 leading-normal font-display break-words text-sm sm:text-base">
-        {compactFields.fullName}
-      </h4>
+    <div className="w-full min-w-0 max-w-full bg-slate-900/95 hover:bg-slate-850 border border-slate-700/80 rounded-xl p-2 text-slate-100 shadow-xs space-y-1.5 transition-all text-xs overflow-hidden box-border">
+      {/* 1. Header: Customer Name & Match/GPS Badges */}
+      <div className="flex items-center justify-between gap-1 min-w-0 w-full">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />
+          <h4 className="font-bold text-sky-200 text-xs sm:text-[13px] font-display truncate leading-tight">
+            {compactFields.fullName}
+          </h4>
+        </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs text-slate-300 leading-relaxed pt-0.5">
-        {compactFields.address && (
-          <div className="flex items-start gap-1.5 flex-1 min-w-[160px]">
-            <Home className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
-            <span className="break-words leading-relaxed">{compactFields.address}</span>
-          </div>
-        )}
-
-        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+        <div className="flex items-center gap-1 shrink-0">
           {matchScore !== undefined && (
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
+            <span className={`text-[8.5px] font-bold px-1.5 py-0.2 rounded border font-mono shrink-0 ${
               matchScore === 100
-                ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700/80'
+                ? 'bg-emerald-950 text-emerald-300 border-emerald-700/60'
                 : matchScore >= 85
-                ? 'bg-sky-950/90 text-sky-300 border-sky-700/80'
-                : 'bg-amber-950/90 text-amber-300 border-amber-700/80'
+                ? 'bg-sky-950 text-sky-300 border-sky-700/60'
+                : 'bg-amber-950 text-amber-300 border-amber-700/60'
             }`}>
-              {matchScore === 100 ? '🎯 ตรงกัน 100%' : `⚡ ตรงกัน ${matchScore}%`}
+              {matchScore === 100 ? '🎯 100%' : `${matchScore}%`}
             </span>
           )}
-          {lat && lon && (
-            <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold px-2 py-0.5 rounded-lg shrink-0">
-              พิกัดพร้อม
+          {lat && lon ? (
+            <span className="text-[8.5px] bg-emerald-950 text-emerald-300 border border-emerald-800/70 font-bold px-1.5 py-0.2 rounded shrink-0">
+              📍 มีพิกัด
+            </span>
+          ) : (
+            <span className="text-[8.5px] bg-amber-950 text-amber-300 border border-amber-800/70 font-bold px-1 py-0.2 rounded shrink-0">
+              ⚠️ ไม่มีพิกัด
             </span>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-2 rounded-xl border border-slate-800 text-[11px]">
+      {/* 2. Compact Address */}
+      {compactFields.address && (
+        <div className="flex items-center gap-1 text-[11px] text-slate-300 leading-tight min-w-0 w-full">
+          <Home className="w-3 h-3 text-cyan-400 shrink-0" />
+          <span className="truncate flex-1 min-w-0">{compactFields.address}</span>
+        </div>
+      )}
+
+      {/* 3. Specs Bar (High Density 2-Column Grid - never overflows) */}
+      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 bg-slate-950/80 px-2 py-1 rounded-lg border border-slate-800/80 text-[10.5px] font-mono w-full min-w-0">
         {compactFields.ca && (
-          <div>
-            <span className="text-slate-400 block text-[9px] uppercase font-bold">CA</span>
-            <span className="text-pink-300 font-mono font-bold">{compactFields.ca}</span>
+          <div className="flex items-center gap-1 min-w-0 truncate">
+            <span className="text-[9px] text-slate-400 font-bold uppercase shrink-0">CA:</span>
+            <span className="text-pink-300 font-bold truncate">{compactFields.ca}</span>
           </div>
         )}
         {compactFields.meter && (
-          <div>
-            <span className="text-slate-400 block text-[9px] uppercase font-bold">Meter</span>
-            <span className="text-yellow-300 font-mono font-bold">{compactFields.meter}</span>
-          </div>
-        )}
-        {compactFields.phone && (
-          <div>
-            <span className="text-slate-400 block text-[9px] uppercase font-bold">โทร</span>
-            <span className="text-green-300 font-mono font-bold">{compactFields.phone}</span>
+          <div className="flex items-center gap-1 min-w-0 truncate">
+            <span className="text-[9px] text-slate-400 font-bold uppercase shrink-0">PEA:</span>
+            <span className="text-yellow-300 font-bold truncate">{compactFields.meter}</span>
           </div>
         )}
         {compactFields.route && (
-          <div>
-            <span className="text-slate-400 block text-[9px] uppercase font-bold">สายป้อน</span>
-            <span className="text-sky-300 font-mono font-bold">{compactFields.route}</span>
+          <div className="flex items-center gap-1 min-w-0 truncate">
+            <span className="text-[9px] text-slate-400 font-bold uppercase shrink-0">สาย:</span>
+            <span className="text-sky-300 font-bold truncate">{compactFields.route}</span>
+          </div>
+        )}
+        {compactFields.phone && (
+          <div className="flex items-center gap-1 min-w-0 truncate">
+            <span className="text-[9px] text-slate-400 font-bold uppercase shrink-0">โทร:</span>
+            <a
+              href={`tel:${compactFields.phone}`}
+              className="text-emerald-300 font-bold truncate hover:underline"
+              title="กดเพื่อโทรออก"
+            >
+              {compactFields.phone}
+            </a>
           </div>
         )}
       </div>
 
-      {lat && lon ? (
-        <div className="flex items-center gap-1.5 pt-1">
+      {/* 4. Full-Width Responsive Action Buttons Row */}
+      {lat && lon && (
+        <div className="grid grid-cols-12 gap-1 pt-0.5 w-full min-w-0">
           <button
             type="button"
             onClick={() => onOpenMap(lat, lon)}
-            className="flex-1 min-h-[38px] bg-sky-500 hover:bg-sky-400 text-slate-950 font-black py-1.5 px-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm"
+            className="col-span-4 h-7 bg-sky-500 hover:bg-sky-400 text-slate-950 font-black rounded-lg text-[10.5px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all shadow-xs min-w-0"
             title="นำทางผ่าน Google Maps"
           >
-            <Map className="w-3.5 h-3.5" />
-            <span>นำทาง</span>
+            <Map className="w-3 h-3 shrink-0" />
+            <span className="truncate">นำทาง</span>
           </button>
           <button
             type="button"
             onClick={handleCopy}
-            className="min-h-[38px] bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-bold py-1.5 px-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+            className="col-span-3 h-7 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700/80 font-bold rounded-lg text-[10.5px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all min-w-0"
             title="คัดลอกรายละเอียดและพิกัด"
           >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copied ? 'ก๊อปแล้ว!' : 'คัดลอก'}</span>
+            {copied ? <Check className="w-3 h-3 text-emerald-400 shrink-0" /> : <Copy className="w-3 h-3 shrink-0" />}
+            <span className="truncate">{copied ? 'ก๊อปแล้ว' : 'คัดลอก'}</span>
           </button>
           <button
             type="button"
             onClick={handleShareLineDirect}
-            className="min-h-[38px] bg-[#06C755] hover:bg-[#05b34c] text-white font-bold py-1.5 px-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm"
+            className="col-span-3 h-7 bg-[#06C755] hover:bg-[#05b34c] text-white font-bold rounded-lg text-[10.5px] flex items-center justify-center gap-1 cursor-pointer active:scale-95 transition-all shadow-xs min-w-0"
             title="แชร์รายละเอียดเข้า LINE ทันที"
           >
-            <MessageCircle className="w-3.5 h-3.5 fill-white" />
-            <span>LINE</span>
+            <MessageCircle className="w-3 h-3 fill-white shrink-0" />
+            <span className="truncate">LINE</span>
           </button>
           <button
             type="button"
             onClick={() => onShare(compactFields, lat, lon)}
-            className="min-h-[38px] bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold p-2 rounded-xl text-xs cursor-pointer active:scale-95 transition-all flex items-center justify-center"
+            className="col-span-2 h-7 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80 font-bold rounded-lg text-[10.5px] cursor-pointer active:scale-95 transition-all flex items-center justify-center min-w-0"
             title="ตัวเลือกการแชร์เพิ่มเติม"
           >
-            <Share2 className="w-3.5 h-3.5" />
+            <Share2 className="w-3 h-3 shrink-0" />
           </button>
         </div>
-      ) : (
-        <p className="text-[11px] text-amber-400 italic">⚠️ ไม่พบพิกัด ละติจูด/ลองจิจูด ในรายการนี้</p>
       )}
     </div>
   );
@@ -1009,40 +1045,41 @@ const ChatMessageBubble = React.memo(({ msg, onOpenMap, onShare }: ChatMessageBu
   const results = msg.results || [];
   const visibleResults = useMemo(() => results.slice(0, displayCount), [results, displayCount]);
   const hasMore = results.length > displayCount;
+  const isBotWithResults = msg.sender === 'ai' && results.length > 0;
 
   return (
-    <div className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'} animate-fadeIn`}>
-      <div className={`flex items-start gap-2 max-w-[92%] ${msg.sender === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+    <div className={`w-full min-w-0 max-w-full flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'} animate-fadeIn overflow-hidden`}>
+      <div className={`flex items-start gap-1.5 w-full min-w-0 max-w-full ${msg.sender === 'user' ? 'justify-end max-w-[88%] ml-auto flex-row-reverse' : ''}`}>
         {msg.sender === 'user' ? (
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 border bg-indigo-600 border-indigo-400 text-white">
-            <User className="w-3.5 h-3.5" />
+          <div className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0 border bg-indigo-600 border-indigo-400 text-white mt-0.5">
+            <User className="w-3 h-3" />
           </div>
         ) : (
-          <div className="w-8 h-8 rounded-xl overflow-hidden shrink-0 border-2 border-sky-400 shadow-md bg-slate-950 transform hover:scale-105 transition-transform">
+          <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg overflow-hidden shrink-0 border border-sky-400/80 shadow-xs bg-slate-950 mt-0.5">
             <img src={peaBotMascotImg} alt="3D Mascot" className="w-full h-full object-cover" />
           </div>
         )}
 
-        <div className={`p-2.5 sm:p-3 rounded-2xl text-xs sm:text-sm font-medium leading-relaxed ${
+        <div className={`flex-1 min-w-0 max-w-full overflow-hidden px-2.5 py-2 rounded-2xl text-xs font-medium leading-relaxed ${
           msg.sender === 'user'
-            ? 'bg-indigo-600 text-white border border-indigo-500 rounded-tr-none shadow-sm'
-            : 'bg-slate-800/90 text-slate-100 border border-slate-700/80 rounded-tl-none shadow-sm'
+            ? 'bg-indigo-600 text-white border border-indigo-500 rounded-tr-none shadow-xs'
+            : 'bg-slate-800/90 text-slate-100 border border-slate-700/80 rounded-tl-none shadow-xs'
         }`}>
-          <div className="whitespace-pre-line break-words">
+          <div className="whitespace-pre-line break-words text-xs">
             {msg.text}
           </div>
 
           {msg.extractedSummary && (
-            <div className="mt-2 pt-1.5 border-t border-slate-700/60 flex items-center gap-1 text-[11px] font-black text-sky-300">
-              <Sparkles className="w-3 h-3 text-yellow-400 shrink-0" />
-              <span>{msg.extractedSummary}</span>
+            <div className="mt-1 pt-1 border-t border-slate-700/60 flex items-center gap-1 text-[10px] font-black text-sky-300 truncate">
+              <Sparkles className="w-2.5 h-2.5 text-yellow-400 shrink-0" />
+              <span className="truncate">{msg.extractedSummary}</span>
             </div>
           )}
 
           {results.length > 0 && (
-            <div className="mt-2.5 pt-2 border-t border-slate-700 space-y-2">
-              <div className="text-[10px] font-black text-amber-300 uppercase tracking-wider flex items-center justify-between">
-                <span>📍 รายการพิกัด ({results.length} รายการ)</span>
+            <div className="mt-2 pt-1.5 border-t border-slate-700 space-y-1.5 w-full min-w-0 max-w-full overflow-hidden">
+              <div className="text-[10px] font-bold text-amber-300 uppercase tracking-wider flex items-center justify-between">
+                <span>📍 พิกัดผู้ใช้ไฟ ({results.length} รายการ)</span>
                 {results.length > displayCount && (
                   <span className="text-[9px] text-slate-400 font-normal font-sans">
                     แสดง {visibleResults.length}/{results.length}
@@ -1050,7 +1087,7 @@ const ChatMessageBubble = React.memo(({ msg, onOpenMap, onShare }: ChatMessageBu
                 )}
               </div>
 
-              <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+              <div className="space-y-1.5 max-h-[440px] sm:max-h-[500px] overflow-y-auto overflow-x-hidden pr-0.5 w-full min-w-0 max-w-full">
                 {visibleResults.map((item, idx) => (
                   <ResultCard
                     key={`${msg.id}-${idx}`}
@@ -1063,10 +1100,10 @@ const ChatMessageBubble = React.memo(({ msg, onOpenMap, onShare }: ChatMessageBu
                 {hasMore && (
                   <button
                     type="button"
-                    onClick={() => setDisplayCount((prev) => prev + 30)}
-                    className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-sky-300 border border-sky-500/40 rounded-xl font-bold text-xs flex items-center justify-center gap-1 cursor-pointer transition-all active:scale-95 shadow-sm"
+                    onClick={() => setDisplayCount((prev) => prev + 25)}
+                    className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-sky-300 border border-sky-500/40 rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 cursor-pointer transition-all active:scale-95 shadow-xs"
                   >
-                    <span>แสดงผลลัพธ์เพิ่มเติมอีก (+{Math.min(30, results.length - displayCount)} รายการ)</span>
+                    <span>แสดงผลลัพธ์เพิ่มเติม (+{Math.min(25, results.length - displayCount)} รายการ)</span>
                   </button>
                 )}
               </div>
@@ -1280,29 +1317,29 @@ const SearchInputBar = React.memo(({
   return (
     <div className="bg-slate-900 border-t border-slate-800 flex flex-col">
       {/* PUSH UI FILTER BAR */}
-      <div className="px-3 pt-2.5 pb-2 bg-slate-950/90 border-b border-slate-800/80 flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
+      <div className="px-2.5 pt-1.5 pb-1.5 bg-slate-950/90 border-b border-slate-800/80 flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-1.5">
           {/* Main Push Button: ค้นหาจากบ้านเลขที่ / หมู่ */}
           <button
             type="button"
             id="btn-filter-house-moo"
             onClick={onToggleHouseFilter}
-            className={`flex-1 min-h-[42px] py-2 px-3 rounded-2xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all duration-200 shadow-sm active:scale-95 border ${
+            className={`flex-1 min-h-[34px] py-1 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-200 shadow-xs active:scale-95 border ${
               isHouseFilterActive
-                ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 border-amber-300 font-black ring-2 ring-amber-400/40 shadow-amber-500/20'
+                ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 border-amber-300 font-black ring-1 ring-amber-400/40 shadow-amber-500/20'
                 : 'bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border-slate-700/80'
             }`}
             title={isHouseFilterActive ? 'กำลังกรอง: ค้นหาเฉพาะบ้านเลขที่/หมู่ (แตะเพื่อปิด)' : 'แตะเพื่อเปิดโหมดค้นหาเฉพาะบ้านเลขที่/หมู่'}
           >
-            <div className={`w-5 h-5 rounded-lg flex items-center justify-center shrink-0 ${
+            <div className={`w-4 h-4 rounded flex items-center justify-center shrink-0 ${
               isHouseFilterActive ? 'bg-slate-950 text-amber-300' : 'bg-slate-800 text-amber-400'
             }`}>
-              <Home className="w-3.5 h-3.5" />
+              <Home className="w-3 h-3" />
             </div>
             
-            <span className="truncate leading-normal">ค้นหาจากบ้านเลขที่ / หมู่</span>
+            <span className="truncate leading-tight">ค้นหาจากบ้านเลขที่ / หมู่</span>
 
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold shrink-0 ${
+            <span className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold shrink-0 ${
               isHouseFilterActive
                 ? 'bg-slate-950/80 text-amber-300 border border-amber-400/50'
                 : 'bg-slate-800 text-slate-400'
@@ -1315,27 +1352,27 @@ const SearchInputBar = React.memo(({
             <button
               type="button"
               onClick={onToggleHouseFilter}
-              className="min-h-[42px] py-1.5 px-2.5 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-300 border border-slate-700 rounded-2xl text-xs font-bold flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
+              className="min-h-[34px] py-1 px-2 bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-300 border border-slate-700 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 transition-colors cursor-pointer"
               title="ปิดโหมดกรองบ้านเลขที่"
             >
-              <X className="w-3.5 h-3.5" />
-              <span>ปิดโหมด</span>
+              <X className="w-3 h-3" />
+              <span>ปิด</span>
             </button>
           )}
         </div>
 
         {/* Quick Moo Chips when House Filter is Active */}
         {isHouseFilterActive && (
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 pt-0.5 scrollbar-none animate-fadeIn">
-            <span className="text-xs font-bold text-amber-400 shrink-0 flex items-center gap-1 mr-0.5">
-              <Filter className="w-3 h-3" /> หมู่:
+          <div className="flex items-center gap-1 overflow-x-auto pb-0.5 pt-0.5 scrollbar-none animate-fadeIn">
+            <span className="text-[11px] font-bold text-amber-400 shrink-0 flex items-center gap-1 mr-0.5">
+              <Filter className="w-2.5 h-2.5" /> หมู่:
             </span>
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((mooNum) => (
               <button
                 key={mooNum}
                 type="button"
                 onClick={() => handleQuickMoo(`ม.${mooNum}`)}
-                className="shrink-0 bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-amber-300 border border-amber-500/30 hover:border-amber-400 px-2.5 py-1 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer active:scale-90"
+                className="shrink-0 bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-amber-300 border border-amber-500/30 hover:border-amber-400 px-2 py-0.5 rounded-lg text-[11px] font-bold font-mono transition-all cursor-pointer active:scale-90"
               >
                 ม.{mooNum}
               </button>
@@ -1346,20 +1383,20 @@ const SearchInputBar = React.memo(({
 
       {/* Listening Status Banner */}
       {isListening && (
-        <div className="bg-gradient-to-r from-rose-950 via-red-900 to-amber-950 px-3 py-2 border-b border-rose-600/40 flex items-center justify-between text-xs sm:text-sm text-rose-200 animate-pulse">
-          <div className="flex items-center gap-2 font-medium overflow-hidden">
-            <span className="relative flex h-2.5 w-2.5 shrink-0">
+        <div className="bg-gradient-to-r from-rose-950 via-red-900 to-amber-950 px-2.5 py-1.5 border-b border-rose-600/40 flex items-center justify-between text-xs text-rose-200 animate-pulse">
+          <div className="flex items-center gap-1.5 font-medium overflow-hidden">
+            <span className="relative flex h-2 w-2 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
             </span>
-            <span className="truncate leading-relaxed">{speechFeedback || 'กำลังฟังเสียงพูด... พูดบ้านเลขที่ หรือเลข CA/Meter ได้เลย'}</span>
+            <span className="truncate text-xs leading-relaxed">{speechFeedback || 'กำลังฟังเสียงพูด... พูดเลข CA หรือบ้านเลขที่ได้เลย'}</span>
           </div>
           <button
             type="button"
             onClick={handleToggleVoice}
-            className="text-xs bg-rose-800 hover:bg-rose-700 text-white font-bold px-2.5 py-1 rounded-lg cursor-pointer shrink-0 ml-2 active:scale-95 transition-all"
+            className="text-[11px] bg-rose-800 hover:bg-rose-700 text-white font-bold px-2 py-0.5 rounded-md cursor-pointer shrink-0 ml-1.5 active:scale-95 transition-all"
           >
-            หยุดฟัง
+            หยุด
           </button>
         </div>
       )}
@@ -1367,13 +1404,13 @@ const SearchInputBar = React.memo(({
       {/* SEARCH FORM */}
       <form 
         onSubmit={handleSubmit}
-        className="p-2.5 sm:p-3 flex items-center gap-2"
+        className="p-2 flex items-center gap-1.5"
       >
         <div className="relative flex-1">
           {/* Active Mode Tag inside input */}
           {isHouseFilterActive && (
-            <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none z-10 bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[11px] font-bold px-2 py-0.5 rounded-lg">
-              <Home className="w-3 h-3 text-amber-400" />
+            <div className="absolute left-2 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none z-10 bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded">
+              <Home className="w-2.5 h-2.5 text-amber-400" />
               <span>บ้านเลขที่/หมู่</span>
             </div>
           )}
@@ -1385,23 +1422,23 @@ const SearchInputBar = React.memo(({
             onChange={(e) => setChatInputText(e.target.value)}
             placeholder={
               isHouseFilterActive
-                ? "ระบุบ้านเลขที่ เช่น 12/3 ม.1 หรือ 45..."
-                : "พิมพ์หรือกดไมค์พูด CA, Meter, ชื่อ/บ้านเลขที่..."
+                ? "ระบุบ้านเลขที่ เช่น 12/3 ม.1..."
+                : "พิมพ์หรือกดไมค์พูด CA, Meter, ชื่อ..."
             }
-            className={`w-full bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium py-2.5 rounded-2xl border focus:outline-none transition-all shadow-inner ${
+            className={`w-full bg-slate-950 text-white placeholder-slate-500 text-xs font-medium py-2 rounded-xl border focus:outline-none transition-all shadow-inner ${
               isHouseFilterActive
-                ? 'pl-32 pr-8 border-amber-400/60 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 text-amber-200'
-                : 'pl-3.5 pr-8 border-slate-700 focus:border-sky-400'
+                ? 'pl-28 pr-7 border-amber-400/60 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 text-amber-200'
+                : 'pl-3 pr-7 border-slate-700 focus:border-sky-400'
             }`}
           />
           {chatInputText && (
             <button
               type="button"
               onClick={() => setChatInputText(isHouseFilterActive ? 'บ้านเลขที่ ' : '')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1 cursor-pointer"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5 cursor-pointer"
               title="ล้างข้อความ"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
@@ -1410,31 +1447,31 @@ const SearchInputBar = React.memo(({
         <button
           type="button"
           onClick={handleToggleVoice}
-          className={`min-h-[44px] min-w-[44px] p-2.5 rounded-2xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 border ${
+          className={`h-9 w-9 min-h-[36px] min-w-[36px] p-2 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 border ${
             isListening 
-              ? 'bg-rose-600 border-rose-400 text-white animate-pulse shadow-lg shadow-rose-600/50' 
+              ? 'bg-rose-600 border-rose-400 text-white animate-pulse shadow-md shadow-rose-600/50' 
               : 'bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-amber-200 border-slate-700'
           }`}
-          title={isListening ? 'แตะเพื่อหยุดบันทึกเสียง' : 'แตะเพื่อพูดแทนการพิมพ์ (รองรับภาษาไทย)'}
+          title={isListening ? 'แตะเพื่อหยุดบันทึกเสียง' : 'แตะเพื่อพูดแทนการพิมพ์'}
         >
-          {isListening ? <MicOff className="w-4 h-4 text-white" /> : <Mic className="w-4 h-4 text-amber-300" />}
+          {isListening ? <MicOff className="w-3.5 h-3.5 text-white" /> : <Mic className="w-3.5 h-3.5 text-amber-300" />}
         </button>
 
         {/* Send Button */}
         <button
           type="submit"
           disabled={!chatInputText.trim() || isAiThinking}
-          className={`min-h-[44px] min-w-[44px] p-2.5 rounded-2xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 ${
+          className={`h-9 w-9 min-h-[36px] min-w-[36px] p-2 rounded-xl font-bold transition-all cursor-pointer flex items-center justify-center shrink-0 active:scale-95 ${
             isHouseFilterActive
-              ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-md shadow-amber-500/20'
+              ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 font-black shadow-xs shadow-amber-500/20'
               : 'bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white'
           }`}
           title="ส่งค้นหา"
         >
           {isAiThinking ? (
-            <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+            <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
           ) : (
-            <Send className="w-4 h-4" />
+            <Send className="w-3.5 h-3.5" />
           )}
         </button>
       </form>
@@ -1446,9 +1483,34 @@ const SearchInputBar = React.memo(({
 // MAIN APPLICATION COMPONENT
 // ----------------------------------------------------------------------
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('home');
+  // Persist activeTab across app switches and browser suspends
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    try {
+      const saved = localStorage.getItem('pea_active_tab') as ActiveTab;
+      if (saved && ['home', 'search', 'streetlight', 'patrol_work', 'recloser_work', 'recloser'].includes(saved)) {
+        return saved === 'recloser_work' ? 'patrol_work' : saved;
+      }
+    } catch {}
+    return 'home';
+  });
+
+  const handleTabChange = useCallback((newTab: ActiveTab) => {
+    setActiveTab(newTab);
+    try {
+      localStorage.setItem('pea_active_tab', newTab);
+    } catch {}
+  }, []);
+
+  // Background keep-alive heartbeat & screen wake lock for field operations
+  useEffect(() => {
+    startBackgroundHeartbeat();
+    return () => {
+      stopBackgroundHeartbeat();
+    };
+  }, []);
+
   const [isAiThinking, setIsAiThinking] = useState(false);
-  const WELCOME_MSG_TEXT = 'หวัดดีครับ! น้อง PEA Bot พร้อมลุยแล้วจ้า ⚡\n\nพิมพ์ **เลข CA** (ขึ้นต้นด้วย 200), **เลข PEA Meter**, หรือ **ชื่อ/บ้านเลขที่** ส่งมาได้เลย เดี๋ยวผมสแกนหาพิกัดให้อย่างจ๊าบเลยครับ! 😎';
+  const WELCOME_MSG_TEXT = 'ระบบค้นหาพิกัดผู้ใช้ไฟ PEA.TKT ⚡\nพิมพ์เลข CA (ขึ้นต้น 200...), เลขมิเตอร์, ชื่อ หรือบ้านเลขที่ เพื่อค้นหาพิกัด';
 
   // Initial Recloser logs state with LocalStorage persistence
   const [recloserLogs, setRecloserLogs] = useState<RecloserLog[]>(() => {
@@ -1646,14 +1708,32 @@ export default function App() {
     }
   }, []);
 
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome-msg',
-      sender: 'ai',
-      text: WELCOME_MSG_TEXT,
-      timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
-    }
-  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = sessionStorage.getItem('pea_search_chat_messages');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [
+      {
+        id: 'welcome-msg',
+        sender: 'ai',
+        text: WELCOME_MSG_TEXT,
+        timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+      }
+    ];
+  });
+
+  // Automatically preserve search chat messages so switching apps doesn't wipe them
+  useEffect(() => {
+    try {
+      if (chatMessages && chatMessages.length > 0) {
+        sessionStorage.setItem('pea_search_chat_messages', JSON.stringify(chatMessages));
+      }
+    } catch {}
+  }, [chatMessages]);
 
   const [loading, setLoading] = useState(false);
   const [, setError] = useState<string | null>(null);
@@ -1669,7 +1749,15 @@ export default function App() {
   });
   const [isSyncing, setIsSyncing] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const [showSplash, setShowSplash] = useState<boolean>(true);
+  
+  // Show splash only on cold launch, not when switching between apps
+  const [showSplash, setShowSplash] = useState<boolean>(() => {
+    try {
+      return !sessionStorage.getItem('pea_splash_completed');
+    } catch {
+      return false;
+    }
+  });
 
   // House/Moo Push UI filter state
   const [isHouseFilterActive, setIsHouseFilterActive] = useState<boolean>(false);
@@ -1832,6 +1920,9 @@ export default function App() {
 
       const rowNameAddrNorm = normalizeThaiAddress(rowNameAddrStr).toLowerCase();
       const rowAddressNorm = normalizeThaiAddress(compactFields.address || rowNameAddrStr).toLowerCase();
+      const cleanFullName = stripThaiNamePrefix(compactFields.fullName || '').toLowerCase().trim();
+      const nameTokens = cleanFullName.split(/\s+/).filter(Boolean);
+      const addrTokens = rowAddressNorm.split(/\s+/).filter(Boolean);
 
       return {
         record: row,
@@ -1845,6 +1936,9 @@ export default function App() {
         pureCaDigits: rowCaStr.replace(/[^0-9a-zA-Z]/g, '').toLowerCase(),
         fullNameSkel: getThaiPhoneticSkeleton(compactFields.fullName.toLowerCase().trim()),
         rowNameAddrSkel: getThaiPhoneticSkeleton(rowNameAddrNorm),
+        cleanFullName,
+        nameTokens,
+        addrTokens,
         lat: coords.lat,
         lon: coords.lon,
         compactFields
@@ -2002,8 +2096,10 @@ export default function App() {
 
     const pureDigits = raw.replace(/[^0-9a-zA-Z]/g, '');
     const normQ = normalizeThaiAddress(raw).toLowerCase();
-    const terms = normQ.split(/\s+/).filter(Boolean);
+    const strippedQuery = stripThaiNamePrefix(raw);
+    const qTerms = strippedQuery.split(/\s+/).filter(Boolean);
     const rawTerms = raw.split(/\s+/).filter(Boolean);
+    const activeTerms = qTerms.length > 0 ? qTerms : rawTerms;
 
     const isHouseOnlyMode =
       isHouseOnlyFilter ||
@@ -2050,7 +2146,10 @@ export default function App() {
 
         // A. Check PEA Meter Match
         if (
-          pureDigits.length >= 3 &&
+          pureDigits.length >= 4 &&
+          /^\d+$/.test(pureDigits) &&
+          !/[a-zA-Zก-ฮ]/.test(raw) &&
+          !raw.includes('/') &&
           (item.rowMeterLower.includes(raw) ||
             (pureDigits && item.pureMeterDigits.includes(pureDigits)) ||
             (item.compactFields.meter && item.compactFields.meter.toLowerCase().includes(raw)))
@@ -2062,6 +2161,7 @@ export default function App() {
         if (
           score < 100 &&
           pureDigits.length >= 4 &&
+          (pureDigits.startsWith('200') || pureDigits.length >= 10 || (!/[a-zA-Zก-ฮ]/.test(raw) && !raw.includes('/'))) &&
           (item.rowCaLower.includes(raw) ||
             (pureDigits && item.pureCaDigits.includes(pureDigits)) ||
             (item.compactFields.ca && item.compactFields.ca.toLowerCase().includes(raw)))
@@ -2076,23 +2176,134 @@ export default function App() {
           }
         }
 
-        // D. Check Full Substring or Terms Match across ALL row fields
+        // D. Precision Name / Multi-Token Match
         if (score < 100) {
+          const nameTokens = item.nameTokens || [];
+          const cleanFullName = item.cleanFullName || '';
+          const fullNameLower = item.compactFields.fullName.toLowerCase().trim();
+          const addrTokens = item.addrTokens || [];
+          const addrClean = item.rowAddressNorm;
+
+          // D1. Exact Full Query in Name
           if (
-            item.rawSearchStr.includes(raw) ||
-            item.rowNameAddrNorm.includes(raw) ||
-            item.rowNameAddrNorm.includes(normQ)
+            fullNameLower.includes(raw) ||
+            (strippedQuery && cleanFullName.includes(strippedQuery))
           ) {
-            score = 100;
-          } else if (rawTerms.length > 0 && rawTerms.every((t) => item.rawSearchStr.includes(t))) {
-            score = 100;
-          } else if (terms.length > 0 && terms.every((t) => item.rowNameAddrNorm.includes(t))) {
-            score = 100;
+            score = 110;
+          } else if (activeTerms.length > 1) {
+            // Multi-term query (e.g. "จันหอม นน" or "จันหอม กุดจิก")
+            // ALL active terms MUST match!
+            let allTermsMatched = true;
+            let totalTermScore = 0;
+            let nameMatchesCount = 0;
+
+            for (const t of activeTerms) {
+              const tNorm = t.toLowerCase().trim();
+              const tLen = tNorm.length;
+              const tSkel = getThaiPhoneticSkeleton(tNorm);
+
+              let termMatched = false;
+              let termScore = 0;
+              let inName = false;
+
+              // 1. Match in Name
+              if (nameTokens.some((nt) => nt === tNorm)) {
+                termMatched = true;
+                termScore = 100;
+                inName = true;
+              } else if (tLen >= 2 && nameTokens.some((nt) => nt.startsWith(tNorm))) {
+                termMatched = true;
+                termScore = 98;
+                inName = true;
+              } else if (tLen >= 3 && cleanFullName.includes(tNorm)) {
+                termMatched = true;
+                termScore = 96;
+                inName = true;
+              } else if (tLen >= 3 && tSkel.length >= 3) {
+                for (const nt of nameTokens) {
+                  const ntSkel = getThaiPhoneticSkeleton(nt);
+                  if (ntSkel === tSkel || (ntSkel.length >= 4 && ntSkel.startsWith(tSkel))) {
+                    termMatched = true;
+                    termScore = 95;
+                    inName = true;
+                    break;
+                  }
+                }
+              }
+
+              // 2. Match in Address / Location (if not matched in name)
+              if (!termMatched) {
+                if (tLen <= 2) {
+                  // Short 1-2 char tokens must NOT match inside words like "ถนน" or "แผนก"
+                  const validAddr = addrTokens.some((at) => {
+                    if (at === 'ถนน' || at === 'ถ.' || at.startsWith('ถนน') || at.startsWith('ถ.')) {
+                      return false;
+                    }
+                    return at === tNorm || at.startsWith(tNorm);
+                  });
+                  if (validAddr) {
+                    termMatched = true;
+                    termScore = 90;
+                  }
+                } else {
+                  // For token len >= 3
+                  if (addrTokens.some((at) => at === tNorm || at.includes(tNorm))) {
+                    termMatched = true;
+                    termScore = 92;
+                  } else if (addrClean.includes(tNorm)) {
+                    termMatched = true;
+                    termScore = 90;
+                  }
+                }
+              }
+
+              if (!termMatched) {
+                allTermsMatched = false;
+                break;
+              }
+
+              totalTermScore += termScore;
+              if (inName) nameMatchesCount++;
+            }
+
+            if (allTermsMatched) {
+              const avg = totalTermScore / activeTerms.length;
+              if (nameMatchesCount === activeTerms.length) {
+                score = Math.round(avg + 10); // All terms matched in name (e.g. First name + Last name)
+              } else if (nameMatchesCount > 0) {
+                score = Math.round(avg); // Name + Location match
+              } else {
+                score = Math.round(avg - 5);
+              }
+            }
+          } else if (activeTerms.length === 1) {
+            // Single-term query (e.g. "จันหอม")
+            const singleTerm = activeTerms[0].toLowerCase().trim();
+            const tLen = singleTerm.length;
+            const tSkel = getThaiPhoneticSkeleton(singleTerm);
+
+            if (nameTokens.some((nt) => nt === singleTerm)) {
+              score = 100;
+            } else if (tLen >= 2 && nameTokens.some((nt) => nt.startsWith(singleTerm))) {
+              score = 98;
+            } else if (tLen >= 3 && cleanFullName.includes(singleTerm)) {
+              score = 97;
+            } else if (tLen >= 3 && tSkel.length >= 3) {
+              for (const nt of nameTokens) {
+                const ntSkel = getThaiPhoneticSkeleton(nt);
+                if (ntSkel === tSkel || (ntSkel.length >= 4 && ntSkel.startsWith(tSkel))) {
+                  score = 95;
+                  break;
+                }
+              }
+            } else if (tLen >= 3 && (addrTokens.some((at) => at === singleTerm || at.includes(singleTerm)) || addrClean.includes(singleTerm))) {
+              score = 92;
+            }
           }
         }
 
-        // E. Fallback to Thai Phonetic Fuzzy Matching with precomputed skeletons
-        if (score < 100) {
+        // E. Fallback: Thai phonetic similarity on name ONLY for single-word queries of length >= 3
+        if (score < 95 && activeTerms.length === 1 && activeTerms[0].length >= 3) {
           const thaiScore = calculateThaiSimilarity(
             raw,
             item.compactFields.fullName,
@@ -2115,15 +2326,15 @@ export default function App() {
 
     let summaryLabel = '';
     if (detectedType === 'house_only') {
-      summaryLabel = `🏠 ค้นหาเฉพาะบ้านเลขที่ / หมู่ (${matched.length} รายการ)`;
+      summaryLabel = `บ้านเลขที่: ${raw}`;
     } else if (detectedType === 'ca') {
-      summaryLabel = `📌 ค้นหาเลขผู้ใช้ไฟ CA (${matched.length} รายการ)`;
+      summaryLabel = `เลข CA: ${pureDigits}`;
     } else if (detectedType === 'meter') {
-      summaryLabel = `⚡ ค้นหาเลขเครื่องวัด PEA Meter (${matched.length} รายการ)`;
+      summaryLabel = `มิเตอร์: ${pureDigits}`;
     } else if (detectedType === 'address') {
-      summaryLabel = `🏠 ค้นหาบ้านเลขที่/ที่อยู่ (${matched.length} รายการ)`;
+      summaryLabel = `ที่อยู่: ${raw}`;
     } else {
-      summaryLabel = `🔍 ผลลัพธ์ตรงกัน 95-100% (${matched.length} รายการ)`;
+      summaryLabel = `ค้นหา: ${raw}`;
     }
 
     return { matched, summaryLabel, detectedType };
@@ -2151,39 +2362,33 @@ export default function App() {
       const { matched: matchedResults, summaryLabel, detectedType } = smartFilterRecords(query, isHouseOnlyFilter);
 
       const topMatch = matchedResults[0];
-      let confidenceNote = '';
-      if (topMatch && topMatch.matchScore && topMatch.matchScore < 100 && topMatch.matchScore >= 95) {
-        confidenceNote = `\n(💡 สแกนพบพิกัดที่ใกล้เคียงด้วยความแม่นยำประมาณ **${topMatch.matchScore}%**)`;
-      }
 
-      let funReply = '';
+      let replyText = '';
       if (matchedResults.length > 0) {
         if (detectedType === 'house_only') {
-          funReply = `น้อง PEA Bot สแกนค้นหาเฉพาะ **บ้านเลขที่ / หมู่** "${query}" พบพิกัดผู้ใช้ไฟ **${matchedResults.length} รายการ** ครับ! 🏠⚡`;
+          replyText = `พบข้อมูลบ้านเลขที่ ${matchedResults.length} รายการ`;
         } else {
-          const greetings = [
-            `จัดไปครับผม! น้อง PEA Bot สแกนเจอพิกัด **${matchedResults.length} รายการ** ลุยหน้างานได้เลยคร้าบ! ⚡`,
-            `เรียบร้อยแล้วจ้า! สแกนพบพิกัดผู้ใช้ไฟ **${matchedResults.length} รายการ** ดูกดนำทาง Google Maps ด้านล่างได้เลยครับ 😎`,
-            `เจอแล้วครับป๋า! น้อง PEA Bot ค้นหาพิกัดมาให้ **${matchedResults.length} รายการ** พร้อมพิกัดจีพีเอสเลยครับ! 🚀`
-          ];
-          funReply = greetings[Math.floor(Math.random() * greetings.length)];
+          replyText = `พบข้อมูลผู้ใช้ไฟ ${matchedResults.length} รายการ`;
+        }
+        if (topMatch && topMatch.matchScore && topMatch.matchScore < 100 && topMatch.matchScore >= 95) {
+          replyText += ` (ความแม่นยำ ~${topMatch.matchScore}%)`;
         }
       } else {
         if (detectedType === 'house_only') {
-          funReply = `น้อง PEA Bot สแกนค้นหาเฉพาะ **บ้านเลขที่ / หมู่** "${query}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองตรวจสอบเลขที่บ้านหรือหมู่ใหม่อีกครั้งนะฮะ 🏠🔍`;
+          replyText = `ไม่พบข้อมูลบ้านเลขที่ "${query}"`;
         } else if (detectedType === 'ca') {
-          funReply = `อ๊ะ... น้อง PEA Bot ลองสแกนเลข CA "${query}" แล้ว ไม่พบในฐานข้อมูลเลยครับ ลองเช็คตัวเลขอีกทีนะฮะ! 🔍`;
+          replyText = `ไม่พบข้อมูลเลข CA "${query}"`;
         } else if (detectedType === 'meter') {
-          funReply = `อ๊ะ... ลองสแกนเลข Meter "${query}" แล้ว ไม่พบพิกัดเลยครับ ลองเช็คเลขเครื่องวัดอีกครั้งนะฮะ! ⚡`;
+          replyText = `ไม่พบข้อมูลเลขมิเตอร์ "${query}"`;
         } else {
-          funReply = `น้อง PEA Bot สแกนดูแล้ว ไม่พบพิกัดที่ตรงหรือใกล้เคียงกับ "${query}" ครับ ลองพิมพ์ชื่อ/ที่อยู่ใหม่ดูนะฮะ! 📌`;
+          replyText = `ไม่พบข้อมูลที่ตรงกับ "${query}"`;
         }
       }
 
       const aiMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         sender: 'ai',
-        text: `${funReply}${confidenceNote}`,
+        text: replyText,
         timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
         results: matchedResults,
         extractedSummary: summaryLabel
@@ -2195,6 +2400,9 @@ export default function App() {
   }, [addToSearchHistory, isAiThinking, isHouseFilterActive, smartFilterRecords]);
 
   const clearChatHistory = useCallback(() => {
+    try {
+      sessionStorage.removeItem('pea_search_chat_messages');
+    } catch {}
     setChatMessages([
       {
         id: 'welcome-msg',
@@ -2235,7 +2443,7 @@ export default function App() {
         isSyncing={isSyncing}
         isDarkMode={isDarkMode}
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         onForceSync={handleForceSync}
         onClearChat={clearChatHistory}
         onShowSplash={handleShowSplash}
@@ -2258,7 +2466,7 @@ export default function App() {
           syncStatus={syncStatus}
           isOffline={isOffline}
           lastSyncFullDate={lastSyncFullDate}
-          onNavigateTab={setActiveTab}
+          onNavigateTab={handleTabChange}
         />
       )}
 
@@ -2269,7 +2477,7 @@ export default function App() {
           {/* MESSAGES SCROLL AREA */}
           <div 
             ref={chatContainerRef}
-            className="flex-1 min-h-0 p-2.5 sm:p-3 overflow-y-auto space-y-2.5 scroll-smooth"
+            className="flex-1 min-h-0 p-1.5 sm:p-2.5 overflow-y-auto overflow-x-hidden space-y-2 scroll-smooth w-full max-w-full"
           >
             {/* Top 3D Animated Mascot Widget */}
             <PeaBot3DMascot isThinking={isAiThinking} />
@@ -2290,7 +2498,7 @@ export default function App() {
                   <img src={peaBotMascotImg} alt="PEA Bot 3D" className="w-full h-full object-cover" />
                 </div>
                 <span className="flex items-center gap-1">
-                  <span>น้อง PEA Bot กำลังสแกนหาพิกัด...</span>
+                  <span>กำลังค้นหาพิกัด...</span>
                   <span className="text-yellow-400 animate-spin">⚡</span>
                 </span>
               </div>
@@ -2324,8 +2532,8 @@ export default function App() {
         <StreetlightTab />
       )}
 
-      {/* TAB 4: RECLOSER WORK */}
-      {activeTab === 'recloser_work' && (
+      {/* TAB 4: PATROL WORK */}
+      {(activeTab === 'patrol_work' || activeTab === 'recloser_work') && (
         <RecloserWorkTab />
       )}
 
@@ -2353,7 +2561,7 @@ export default function App() {
       {/* BOTTOM NAVIGATION BAR */}
       <BottomNavBar
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         recloserCount={recloserLogs.length}
       />
 

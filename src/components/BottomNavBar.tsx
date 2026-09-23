@@ -86,25 +86,25 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
           </span>
         </button>
 
-        {/* TAB 4: PRATOL WORK */}
+        {/* TAB 4: PATROL WORK */}
         <button
-          id="tab-pratol-work"
+          id="tab-patrol-work"
           type="button"
-          onClick={() => onTabChange('recloser_work')}
+          onClick={() => onTabChange('patrol_work')}
           className={`flex flex-col items-center justify-center min-h-[46px] py-1 px-0.5 rounded-2xl transition-all cursor-pointer select-none active:scale-95 ${
-            activeTab === 'recloser_work'
+            activeTab === 'patrol_work' || activeTab === 'recloser_work'
               ? 'text-amber-300 bg-amber-500/20 border border-amber-400/40 shadow-lg shadow-amber-950/60'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
           }`}
         >
           <div className="relative">
-            <Wrench className={`w-4 h-4 ${activeTab === 'recloser_work' ? 'text-amber-300 scale-110' : 'text-slate-400'} transition-transform`} />
-            {activeTab === 'recloser_work' && (
+            <Wrench className={`w-4 h-4 ${activeTab === 'patrol_work' || activeTab === 'recloser_work' ? 'text-amber-300 scale-110' : 'text-slate-400'} transition-transform`} />
+            {(activeTab === 'patrol_work' || activeTab === 'recloser_work') && (
               <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse ring-2 ring-slate-950" />
             )}
           </div>
-          <span className={`text-[9.5px] font-bold mt-1 tracking-tight truncate max-w-full ${activeTab === 'recloser_work' ? 'text-amber-200 font-black' : 'text-slate-400'}`}>
-            Pratol Work
+          <span className={`text-[9.5px] font-bold mt-1 tracking-tight truncate max-w-full ${activeTab === 'patrol_work' || activeTab === 'recloser_work' ? 'text-amber-200 font-black' : 'text-slate-400'}`}>
+            Patrol Work
           </span>
         </button>
 

@@ -381,16 +381,16 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
           <div className="flex-1 min-w-0">
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/30 text-amber-300 text-[10px] font-bold mb-1.5">
               <Wrench className="w-3 h-3 text-amber-400 shrink-0" />
-              <span>PEA Pratol Operations</span>
+              <span>PEA Patrol Operations</span>
             </div>
             <h1 className="text-lg sm:text-xl font-black text-white tracking-tight leading-snug flex items-center gap-2">
-              <span>Pratol Work</span>
+              <span>Patrol Work</span>
               <span className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
                 106 หม้อแปลง
               </span>
             </h1>
             <p className="text-xs text-slate-300 mt-1 font-medium">
-              จัดการงาน Pratol • ค้นหาตาม PEA หม้อแปลง • คัดลอกละติจูด ลองติจูด • จัดเรียงเส้นทางคุ้มค่าที่สุด
+              จัดการงาน Patrol • ค้นหาตาม PEA หม้อแปลง • คัดลอกละติจูด ลองติจูด • จัดเรียงเส้นทางคุ้มค่าที่สุด
             </p>
           </div>
 
@@ -1040,13 +1040,12 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                       id={`btn-status-pending-${item.peano}`}
                       type="button"
                       onClick={() => handleStatusChange(item.peano, 'ยังไม่ดำเนินการ', item.village)}
-                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
+                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex items-center justify-center text-center border ${
                         currentStatus === 'ยังไม่ดำเนินการ'
                           ? 'bg-sky-500 text-slate-950 border-sky-400 font-black shadow-md'
                           : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-sky-300'
                       }`}
                     >
-                      <span className="text-[10px] opacity-80 font-mono"></span>
                       <span className="truncate max-w-full">ยังไม่ดำเนินการ</span>
                     </button>
 
@@ -1055,13 +1054,12 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                       id={`btn-status-inprogress-${item.peano}`}
                       type="button"
                       onClick={() => handleStatusChange(item.peano, 'กำลังดำเนินการ', item.village)}
-                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
+                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex items-center justify-center text-center border ${
                         currentStatus === 'กำลังดำเนินการ'
                           ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-md'
                           : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-amber-300'
                       }`}
                     >
-                      <span className="text-[10px] opacity-80 font-mono"></span>
                       <span className="truncate max-w-full">กำลังดำเนินการ</span>
                     </button>
 
@@ -1070,13 +1068,12 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                       id={`btn-status-waiting-import-${item.peano}`}
                       type="button"
                       onClick={() => handleStatusChange(item.peano, 'รอนำเข้าระบบ', item.village)}
-                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
+                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex items-center justify-center text-center border ${
                         currentStatus === 'รอนำเข้าระบบ'
                           ? 'bg-purple-600 text-white border-purple-400 font-black shadow-md shadow-purple-900/30'
                           : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-purple-300'
                       }`}
                     >
-                      <span className="text-[10px] opacity-80 font-mono"></span>
                       <span className="truncate max-w-full">รอนำเข้าระบบ</span>
                     </button>
 
@@ -1085,13 +1082,12 @@ export const RecloserWorkTab: React.FC<RecloserWorkTabProps> = ({ initialVillage
                       id={`btn-status-completed-${item.peano}`}
                       type="button"
                       onClick={() => handleStatusChange(item.peano, 'ดำเนินการเสร็จสิ้น', item.village)}
-                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex flex-col items-center justify-center text-center gap-0.5 border ${
+                      className={`py-2 px-1 rounded-2xl text-[10.5px] sm:text-[11px] font-bold transition-all cursor-pointer active:scale-95 flex items-center justify-center text-center border ${
                         currentStatus === 'ดำเนินการเสร็จสิ้น'
                           ? 'bg-emerald-500 text-slate-950 border-emerald-400 font-black shadow-md'
                           : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-emerald-300'
                       }`}
                     >
-                      <span className="text-[10px] opacity-80 font-mono"></span>
                       <span className="truncate max-w-full">ดำเนินการเสร็จสิ้น</span>
                     </button>
                   </div>

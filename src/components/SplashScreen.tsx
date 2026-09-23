@@ -47,6 +47,15 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
         }
 
         const next = prev + 2;
+        if (next >= 100) {
+          clearInterval(interval);
+          setStatusText('ระบบพร้อมใช้งาน 100%');
+          setTimeout(() => {
+            handleEnterAppDirectly();
+          }, 350);
+          return 100;
+        }
+
         if (next < 30) {
           setStatusText('กำลังโหลดฐานข้อมูลพิกัดผู้ใช้ไฟ...');
         } else if (next < 70) {
@@ -58,7 +67,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
         }
         return next;
       });
-    }, 30);
+    }, 25);
 
     return () => {
       clearInterval(interval);
@@ -68,10 +77,15 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
   }, []);
 
   const handleEnterAppDirectly = () => {
+    try {
+      sessionStorage.setItem('pea_splash_completed', 'true');
+      localStorage.setItem('pea_splash_completed', 'true');
+      localStorage.setItem('pea_splash_last_shown', Date.now().toString());
+    } catch {}
     setIsExiting(true);
     setTimeout(() => {
       onComplete();
-    }, 500);
+    }, 300);
   };
 
   const handleTriggerInstall = async () => {
@@ -117,16 +131,27 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
             className="absolute bottom-1/4 left-1/2 -translate-x-1/2 translate-y-1/2 w-80 h-80 bg-sky-500/20 rounded-full blur-3xl pointer-events-none"
           />
 
-          {/* Top Header Badge */}
-          <motion.div
-            initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.2, duration: 0.5 }}
-            className="relative z-10 pt-2 flex items-center gap-2 bg-slate-900/80 backdrop-blur-md px-4 py-1.5 rounded-full border border-sky-500/30 text-sky-300 text-xs font-semibold shadow-lg shadow-sky-950/50"
-          >
-            <ShieldCheck className="w-4 h-4 text-sky-400" />
-            <span>PROVINCIAL ELECTRICITY AUTHORITY</span>
-          </motion.div>
+          {/* Top Header Badge & Skip Button */}
+          <div className="relative z-10 w-full max-w-sm flex items-center justify-between gap-2 pt-2">
+            <motion.div
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.2, duration: 0.5 }}
+              className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-sky-500/30 text-sky-300 text-xs font-semibold shadow-lg shadow-sky-950/50"
+            >
+              <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0" />
+              <span className="truncate">PEA.TKT SMART GPS</span>
+            </motion.div>
+
+            <button
+              type="button"
+              onClick={handleEnterAppDirectly}
+              className="bg-slate-900/90 hover:bg-slate-800 text-sky-300 border border-sky-400/40 px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer transition-all active:scale-95 shadow-md flex items-center gap-1"
+            >
+              <span>ข้ามเข้าสู่แอป</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
           {/* Center Graphic & Title Section */}
           <div className="relative z-10 my-auto flex flex-col items-center text-center max-w-sm w-full py-4">

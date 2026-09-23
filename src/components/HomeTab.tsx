@@ -157,10 +157,10 @@ export const HomeTab: React.FC<HomeTabProps> = ({
           </div>
         </div>
 
-        {/* FUNCTION 3: Pratol Work */}
+        {/* FUNCTION 3: Patrol Work */}
         <div 
-          id="btn-nav-pratol-work"
-          onClick={() => onNavigateTab('recloser_work')}
+          id="btn-nav-patrol-work"
+          onClick={() => onNavigateTab('patrol_work')}
           className="group relative overflow-hidden bg-gradient-to-r from-slate-900 via-amber-950/50 to-slate-900 hover:from-amber-950/90 hover:via-orange-950/80 hover:to-slate-900 border border-slate-800 hover:border-amber-400/60 rounded-2xl sm:rounded-3xl p-3.5 sm:p-4 cursor-pointer transition-all duration-200 shadow-md hover:shadow-amber-900/30 active:scale-[0.98]"
         >
           <div className="flex items-center justify-between gap-3">
@@ -171,7 +171,7 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5">
                 <h3 className="text-sm sm:text-base font-black text-white group-hover:text-amber-300 transition-colors truncate">
-                  Pratol Work
+                  Patrol Work
                 </h3>
                 <span className="text-[10px] font-bold text-amber-400 bg-amber-500/20 px-1.5 py-0.2 rounded-full border border-amber-500/30">
                   ใหม่

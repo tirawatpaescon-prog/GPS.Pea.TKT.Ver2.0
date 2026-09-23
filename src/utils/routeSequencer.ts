@@ -372,7 +372,7 @@ export function generateRecloserWorkSummaryText(
     year: 'numeric'
   });
 
-  let text = `⚡ แผนปฏิบัติงาน Pratol Work (จัดลำดับจากจุดที่อยู่ปัจจุบัน: ใกล้ ➔ ไกล) ⚡\n`;
+  let text = `⚡ แผนปฏิบัติงาน Patrol Work (จัดลำดับจากจุดที่อยู่ปัจจุบัน: ใกล้ ➔ ไกล) ⚡\n`;
   text += `📅 วันที่: ${dateStr}\n`;
   if (villageName && villageName !== 'all') {
     text += `🏘️ หมู่บ้าน: ${villageName}\n`;

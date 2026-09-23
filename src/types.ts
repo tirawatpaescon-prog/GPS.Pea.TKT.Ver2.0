@@ -24,6 +24,9 @@ export interface IndexedRecord {
   pureCaDigits: string;
   fullNameSkel: string;
   rowNameAddrSkel: string;
+  cleanFullName?: string;
+  nameTokens?: string[];
+  addrTokens?: string[];
   lat: string | null;
   lon: string | null;
   compactFields: CompactFields;
@@ -76,8 +79,9 @@ export interface RecloserLog {
   createdAt: number;
 }
 
-export type ActiveTab = 'home' | 'search' | 'streetlight' | 'recloser_work' | 'recloser';
+export type ActiveTab = 'home' | 'search' | 'streetlight' | 'patrol_work' | 'recloser' | 'recloser_work';
 
 export type StreetlightSurveyStatusType = 'สำรวจแล้ว' | 'กำลังดำเนินการ' | 'ยังไม่สำรวจ';
 
-export type RecloserWorkStatusType = 'ยังไม่ดำเนินการ' | 'กำลังดำเนินการ' | 'รอนำเข้าระบบ' | 'ดำเนินการเสร็จสิ้น';
+export type PatrolWorkStatusType = 'ยังไม่ดำเนินการ' | 'กำลังดำเนินการ' | 'รอนำเข้าระบบ' | 'ดำเนินการเสร็จสิ้น';
+export type RecloserWorkStatusType = PatrolWorkStatusType;
