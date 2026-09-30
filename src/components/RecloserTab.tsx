@@ -256,7 +256,7 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
   }, [recloserLogs, selectedHistoryDate, subRecloserFilter]);
 
   // Handle Form Submission
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (counterBR === '' && counterA === '' && currentA === '') {
@@ -284,26 +284,32 @@ export const RecloserTab: React.FC<RecloserTabProps> = ({
       createdAt: Date.now()
     };
 
-    onSaveLog(newLog);
+    try {
+      await onSaveLog(newLog);
 
-    // Show Success feedback
-    setSaveSuccessMsg(true);
-    setTimeout(() => setSaveSuccessMsg(false), 3000);
+      // Show Success feedback
+      setSaveSuccessMsg(true);
+      setTimeout(() => setSaveSuccessMsg(false), 3000);
 
-    // Reset numeric inputs
-    setCounterBR('');
-    setCounterA('');
-    setCounterB('');
-    setCounterC('');
-    setCounterG('');
-    setCurrentA('');
-    setCurrentB('');
-    setCurrentC('');
-    setCurrentG('');
-    setNotes('');
+      // Reset numeric inputs
+      setCounterBR('');
+      setCounterA('');
+      setCounterB('');
+      setCounterC('');
+      setCounterG('');
+      setCurrentA('');
+      setCurrentB('');
+      setCurrentC('');
+      setCurrentG('');
+      setNotes('');
 
-    // Update time to now for next entry
-    setTimeToNow();
+      // Update time to now for next entry
+      setTimeToNow();
+    } catch (err) {
+      console.error('Save error in form:', err);
+      setDeleteToastMsg('บันทึกข้อมูลไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
+      setTimeout(() => setDeleteToastMsg(null), 3500);
+    }
   };
 
   // Export CSV
@@ -1001,6 +1007,34 @@ ${log.notes ? `📝 หมายเหตุ: ${log.notes}\n` : ''}`;
                     <span>พิมพ์รายงาน PDF</span>
                   </button>
                 </div>
+
+                {/* Banner to purge legacy demo data if present */}
+                {recloserLogs.some((l) => l.id.startsWith('rec-demo-')) && (
+                  <div className="bg-amber-500/15 border border-amber-500/40 rounded-2xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs shadow-sm">
+                    <div className="flex items-center gap-2 text-amber-300">
+                      <Trash2 className="w-4 h-4 text-amber-400 shrink-0" />
+                      <div>
+                        <span className="font-bold">ตรวจพบข้อมูลตัวอย่างตั้งต้น (Demo) ในระบบ</span>
+                        <p className="text-[10px] text-amber-400/80">สามารถกดลบเพื่อเริ่มต้นใช้งานจริงด้วยข้อมูลที่คุณบันทึกเองเท่านั้น</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const demoIds = recloserLogs.filter((l) => l.id.startsWith('rec-demo-')).map((l) => l.id);
+                        setDeleteConfirmTarget({
+                          type: 'day',
+                          date: 'ข้อมูลตัวอย่างตั้งต้น (Demo)',
+                          count: demoIds.length,
+                          logIds: demoIds
+                        });
+                      }}
+                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-3 py-1.5 rounded-xl text-xs shrink-0 active:scale-95 transition-all cursor-pointer shadow-sm w-full sm:w-auto text-center"
+                    >
+                      ลบข้อมูลตัวอย่างทั้งหมด
+                    </button>
+                  </div>
+                )}
 
                 {filteredDateGroups.length > 0 ? (
                   filteredDateGroups.map((group) => {

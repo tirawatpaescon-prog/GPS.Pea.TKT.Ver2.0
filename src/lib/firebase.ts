@@ -337,8 +337,77 @@ export async function testFirestoreConnection(): Promise<boolean> {
 }
 
 /**
+ * Sanitize RecloserLog into pure Firestore-supported key-value object
+ * Strips all undefined, null, NaN or invalid values so Firestore setDoc never throws.
+ */
+export function sanitizeRecloserLog(log: RecloserLog): Record<string, any> {
+  const clean: Record<string, any> = {
+    id: String(log.id),
+    recloserId: String(log.recloserId),
+    recloserName: String(log.recloserName || ''),
+    recordDate: String(log.recordDate),
+    recordTime: String(log.recordTime),
+    createdAt: typeof log.createdAt === 'number' && !isNaN(log.createdAt) ? log.createdAt : Date.now()
+  };
+
+  if (typeof log.counterBR === 'number' && !isNaN(log.counterBR)) clean.counterBR = log.counterBR;
+  if (typeof log.counterA === 'number' && !isNaN(log.counterA)) clean.counterA = log.counterA;
+  if (typeof log.counterB === 'number' && !isNaN(log.counterB)) clean.counterB = log.counterB;
+  if (typeof log.counterC === 'number' && !isNaN(log.counterC)) clean.counterC = log.counterC;
+  if (typeof log.counterG === 'number' && !isNaN(log.counterG)) clean.counterG = log.counterG;
+
+  if (typeof log.currentA === 'number' && !isNaN(log.currentA)) clean.currentA = log.currentA;
+  if (typeof log.currentB === 'number' && !isNaN(log.currentB)) clean.currentB = log.currentB;
+  if (typeof log.currentC === 'number' && !isNaN(log.currentC)) clean.currentC = log.currentC;
+  if (typeof log.currentG === 'number' && !isNaN(log.currentG)) clean.currentG = log.currentG;
+
+  if (log.notes && typeof log.notes === 'string' && log.notes.trim()) {
+    clean.notes = log.notes.trim();
+  }
+  if (log.recorderName && typeof log.recorderName === 'string' && log.recorderName.trim()) {
+    clean.recorderName = log.recorderName.trim();
+  }
+
+  return clean;
+}
+
+/**
+ * Real-time listener for Recloser logs.
+ * Automatically synchronizes changes (creates, updates, deletes) in real-time across all field devices.
+ */
+export function subscribeToRecloserLogs(
+  onUpdate: (logs: RecloserLog[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  const colRef = collection(db, RECLOSER_COLLECTION);
+  const q = query(colRef, orderBy('createdAt', 'desc'));
+
+  const unsubscribe = onSnapshot(
+    q,
+    (snapshot) => {
+      const logs: RecloserLog[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as RecloserLog;
+        if (data && data.id && data.recloserId) {
+          logs.push(data);
+        }
+      });
+      onUpdate(logs);
+    },
+    (err) => {
+      if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
+        handleFirestoreError(err, OperationType.GET, RECLOSER_COLLECTION);
+      }
+      console.warn('[Firebase] Recloser logs onSnapshot operating in cached/offline state:', err?.message || err);
+      if (onError) onError(err);
+    }
+  );
+
+  return unsubscribe;
+}
+
+/**
  * Fetch all Recloser logs from Firestore Cloud Database.
- * Called on application startup / opening tab without keeping a heavy continuous stream.
  */
 export async function fetchRecloserLogsFromFirestore(): Promise<RecloserLog[]> {
   try {
@@ -364,12 +433,13 @@ export async function fetchRecloserLogsFromFirestore(): Promise<RecloserLog[]> {
 
 /**
  * Save a new or updated Recloser log to Firestore Cloud Database.
- * Triggered on user record action.
+ * Sanitizes input to prevent any undefined field errors.
  */
 export async function saveRecloserLogToFirestore(log: RecloserLog): Promise<void> {
   try {
-    const docRef = doc(db, RECLOSER_COLLECTION, log.id);
-    await setDoc(docRef, log, { merge: true });
+    const cleanData = sanitizeRecloserLog(log);
+    const docRef = doc(db, RECLOSER_COLLECTION, cleanData.id);
+    await setDoc(docRef, cleanData);
   } catch (err: any) {
     if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
       handleFirestoreError(err, OperationType.WRITE, `${RECLOSER_COLLECTION}/${log.id}`);
@@ -413,26 +483,6 @@ export async function deleteBatchRecloserLogsFromFirestore(logIds: string[]): Pr
     }
     console.error('[Firebase] Error batch deleting recloser logs from Firestore:', err?.message || err);
     throw err;
-  }
-}
-
-/**
- * Seeds demo or local recloser logs to Firestore if Cloud is empty.
- */
-export async function seedInitialRecloserLogsToFirestore(initialLogs: RecloserLog[]): Promise<void> {
-  if (!initialLogs || initialLogs.length === 0) return;
-  try {
-    const batch = writeBatch(db);
-    for (const log of initialLogs) {
-      const docRef = doc(db, RECLOSER_COLLECTION, log.id);
-      batch.set(docRef, log, { merge: true });
-    }
-    await batch.commit();
-  } catch (err: any) {
-    if (err?.code === 'permission-denied' || err?.message?.includes('Missing or insufficient permissions')) {
-      handleFirestoreError(err, OperationType.WRITE, RECLOSER_COLLECTION);
-    }
-    console.warn('[Firebase] Error seeding initial recloser logs:', err?.message || err);
   }
 }
 
